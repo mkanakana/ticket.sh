@@ -12,7 +12,7 @@ fi
 # Source file: src/ticket.sh
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20250901.143520
+# Version: 20250901.153950
 # Built from source files
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
@@ -792,7 +792,7 @@ extract_markdown_body() {
 
 # Check if we're in a git repository
 check_git_repo() {
-    if [[ ! -d .git ]]; then
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
         cat >&2 << EOF
 Error: Not in a git repository
 This directory is not a git repository. Please:
@@ -1086,7 +1086,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20250901.143520
+# Version: 20250901.153950
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
 # Perfect for small teams, solo developers, and AI coding assistants.
@@ -1178,7 +1178,7 @@ SCRIPT_COMMAND=$(get_script_command)
 
 
 # Global variables
-VERSION="20250901.143520"  # This will be replaced during build
+VERSION="20250901.153950"  # This will be replaced during build
 CONFIG_FILE=""  # Will be set dynamically by get_config_file()
 CURRENT_TICKET_LINK="current-ticket.md"
 CURRENT_NOTE_LINK="current-note.md"

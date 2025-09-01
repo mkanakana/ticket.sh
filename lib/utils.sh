@@ -4,7 +4,7 @@
 
 # Check if we're in a git repository
 check_git_repo() {
-    if [[ ! -d .git ]]; then
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
         cat >&2 << EOF
 Error: Not in a git repository
 This directory is not a git repository. Please:
