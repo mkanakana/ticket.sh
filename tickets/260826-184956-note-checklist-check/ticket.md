@@ -3,7 +3,7 @@ priority: 2
 base_branch: default  # Override base branch for start/close (default: use default_branch from config)
 description: "note のチェックリスト未記入を check / close で検出する（グループは直近の heading、3状態、既定 opt-out）"
 created_at: "2026-08-26T18:49:56Z"
-started_at: null  # Do not modify manually
+started_at: 2026-08-26T18:50:47Z # Do not modify manually
 closed_at: null   # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
