@@ -21,7 +21,7 @@ ticket-sh/
 │   ├── yaml-sh.sh         # YAML parser library
 │   ├── yaml-frontmatter.sh # YAML frontmatter handler
 │   ├── utils.sh           # Utility functions
-│   └── note-checklist.sh  # Note checklist scanner (check/close)
+│   └── checklist.sh       # Ticket/note checklist scanner (check/close)
 ├── test/
 │   ├── test-*.sh          # Feature-specific test files
 │   ├── run-all.sh         # Local test runner
@@ -318,9 +318,9 @@ Documentation updates should be part of the same PR as code changes.
    history, and the same commit already carries the ticket file itself. Build the
    message with `$'\n\n'` and plain `echo`, never `echo -e`: the body is
    arbitrary Markdown and may contain backslash escapes that `-e` would expand.
-9. **The note checklist is scanned, not reconciled against the template**: `check`
-   and `close` read the note itself and group its checkboxes by the nearest
-   preceding heading. They deliberately do NOT compare it against `note_content`
+9. **The checklist is scanned, not reconciled against the template**: `check`
+   and `close` read the ticket body and the note themselves and group the
+   checkboxes by the nearest preceding heading, per file. They deliberately do NOT compare it against `note_content`
    in the config to detect deleted lines. The config holds the *current*
    template, while a ticket started last week was handed an older one, so adding
    a line to the template would mark every in-flight ticket as having deleted it;
@@ -337,8 +337,15 @@ Documentation updates should be part of the same PR as code changes.
    disappear.
 11. **`--force` does not bypass the checklist**: `--force` is about the state of
    the Git tree. The way past the checklist is `- [-] ... - skip: <reason>`,
-   which leaves the reason in the note where a reader can weigh it. A flag that
+   which leaves the reason in the file where a reader can weigh it. A flag that
    recorded nothing would restore the status quo the check exists to end.
+12. **A renamed config key is an error, not a silent no-op**: `require_checklist`
+   was `require_note_checklist` while the check only read the note. The old name
+   is gone, but a config that still sets it to `true` fails loudly rather than
+   being ignored - dropping a gate someone deliberately switched on, without
+   saying so, is the same "it is there and nobody looks at it" failure the check
+   exists to end. Set to `false` it only warns, since nothing is being disabled
+   behind the user's back.
 
 ### Recent Enhancements
 
@@ -349,7 +356,7 @@ Documentation updates should be part of the same PR as code changes.
 - **Git history protection**: Prevents accidental commits of working files
 - **Work notes separation**: Optional separate note files for debugging and investigation logs
 - **Worktree support**: Optional git worktree mode for parallel ticket work without branch switching
-- **Note checklist check**: `check` reports the note's checkboxes by heading group, `check --require "<group>"` judges one group, and `require_note_checklist: true` makes `close` refuse while any are unchecked
+- **Checklist check**: `check` reports the checkboxes in both `ticket.md` and `note.md` by heading group, split per file; `check --require "<group>"` judges one group across both; and `require_checklist: true` makes `close` refuse while any are unchecked
 
 ## Troubleshooting
 

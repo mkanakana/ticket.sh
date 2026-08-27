@@ -247,10 +247,11 @@ auto_push: true          # Push on close
 # start-time stamp. Hooks run by default.
 no_verify: false
 
-# Refuse to close while the note still has unchecked checklist items.
-# Off by default: existing notes are full of boxes nobody ever filled in, and
-# turning this on for them would block every close at once.
-require_note_checklist: false
+# Refuse to close while the ticket's Tasks list or the note still has unchecked
+# checklist items. Off by default: existing tickets and notes are full of boxes
+# nobody ever filled in, and turning this on for them would block every close at
+# once.
+require_checklist: false
 
 # Worktree mode (optional)
 # worktree_mode: false    # When true, 'start' always creates a worktree
@@ -287,7 +288,7 @@ branch_prefix: "feature/"
 repository: "origin"
 auto_push: true
 no_verify: false
-require_note_checklist: false
+require_checklist: false
 default_content: |
   # Ticket Overview
   
@@ -311,7 +312,7 @@ default_content: |
 ./ticket.sh list [--status todo|doing|done] [--count N]  # List tickets
 ./ticket.sh start [--worktree] [--copy-file <path>]... <ticket-name>  # Start ticket/create branch (--worktree for separate directory; --copy-file appends worktree_copy_files entry)
 ./ticket.sh restore                       # Restore current-ticket link
-./ticket.sh check [--require "<group name>"]  # Sync status + note checklist (--require judges one group)
+./ticket.sh check [--require "<group name>"]  # Sync status + ticket/note checklists (--require judges one group)
 ./ticket.sh close [--no-push] [--force|-f]  # Complete ticket/merge process
 ./ticket.sh cancel [--force|-f]           # Cancel ticket without merging
 ```
@@ -673,14 +674,28 @@ Permission denied creating symlink. Please:
 ### `check [--require "<group name>"]`
 Reports the ticket/branch synchronization status, restoring the active-ticket
 symlink when the current branch has a matching started ticket. It also reports
-the state of the checklist in the ticket's note.
+the state of the checklists in the ticket's two files.
 
-**Note Checklist**
+**The Checklist**
 
-The note template ticket.sh hands out can carry checkboxes, but nothing used to
-look at whether they were filled in. Since ticket.sh is the side that handed the
-template out, it is the only thing that can.
+Both files a ticket owns can carry checkboxes, and nothing used to look at
+whether they were filled in:
 
+| File | Checklist |
+|---|---|
+| `ticket.md` | the `## Tasks` list, present in the stock template |
+| `note.md` | whatever checklist the project puts in its note template |
+
+Since ticket.sh is the side that handed both templates out, it is the only thing
+that can tell whether they were filled in.
+
+- **Both files are read, and kept apart.** The report is split by file, and the
+  same heading in both stays two groups, so the output says which file to go and
+  edit.
+- **The ticket's YAML frontmatter is skipped.** Otherwise a `- [ ]` inside a
+  multi-line `description` would be counted as a checkbox. The note has no
+  frontmatter and is read as-is: running it through the stripper would risk
+  mistaking a horizontal rule on its first line for a frontmatter fence.
 - **Groups.** A checkbox belongs to the nearest heading above it, at any level.
   The group name is the heading's own text, so ticket.sh never needs to know
   what a group means. Checkboxes above the first heading fall into `(ungrouped)`.
@@ -709,7 +724,10 @@ template out, it is the only thing that can.
 **Options:**
 - `--require "<group name>"`: judge only that group, and exit 1 if anything in
   it is unchecked. The caller is the one that knows which stage the work is at;
-  ticket.sh only has to match a string, so it needs no notion of stages.
+  ticket.sh only has to match a string, so it needs no notion of stages. The
+  name is matched against heading text alone, with no file qualifier: a group by
+  that name in **either** file is judged, and both together if it appears in
+  both. Callers name the stage, not the file the author chose to keep it in.
 
 **Exit status:**
 - Plain `check` never fails on an unfinished checklist. Halfway through a
@@ -722,9 +740,22 @@ template out, it is the only thing that can.
 - `check --require` exits 1 when no ticket is active, since there is no note to
   judge.
 
-A ticket whose note file is absent, or whose note holds no checkboxes at all,
-produces no checklist output and never fails. Projects that put no checkboxes in
-their note template are unaffected.
+A file that is absent simply contributes nothing. When neither file holds a
+checkbox, there is no checklist output and nothing ever fails.
+
+**Example**
+
+```
+Checklist: 6 / 16
+  ticket.md
+    Tasks                 2 / 9
+        - Task 1
+        - Run tests before closing
+  note.md
+    Implementation log    4 / 4  done (1 skipped)
+    Review                0 / 1
+        - findings resolved
+```
 
 **What `check` deliberately does not do**
 
@@ -742,11 +773,16 @@ Completes ticket and merge process:
 - `--no-push`: Skip automatic push operations even when `auto_push: true`
 - `--force` or `-f`: Bypass uncommitted changes check and force close the ticket
 
-**Note Checklist Preflight:**
+**Checklist Preflight:**
 
-With `require_note_checklist: true` in config, close refuses while the note has
-unchecked items, lists them by group, and changes nothing. Off by default. See
-`check` above for how the checklist is read.
+With `require_checklist: true` in config, close refuses while the ticket body or
+the note has unchecked items, lists them by file and group, and changes nothing.
+Off by default. See `check` above for how the checklists are read.
+
+The key was called `require_note_checklist` while the check only looked at the
+note. That name is gone. It is not silently ignored: a config that still sets it
+to `true` is an error, because quietly dropping a gate someone switched on is
+the very failure this check exists to end. Set to `false`, it only warns.
 
 `--force` does **not** bypass it. `--force` is about the state of the Git tree
 (a ticket file that also moved on the base branch); the way past this check is

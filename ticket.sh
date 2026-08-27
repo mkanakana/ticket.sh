@@ -12,7 +12,7 @@ fi
 # Source file: src/ticket.sh
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20260826.192141
+# Version: 20260827.022515
 # Built from source files
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
@@ -641,7 +641,7 @@ update_yaml_frontmatter_field() {
     while IFS= read -r line; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             frontmatter_start=1
@@ -665,7 +665,7 @@ update_yaml_frontmatter_field() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             echo "$line" >> "$temp_file"
@@ -735,7 +735,7 @@ extract_yaml_frontmatter() {
     while IFS= read -r line; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_frontmatter=1
@@ -757,6 +757,12 @@ extract_yaml_frontmatter() {
 
 # Extract markdown body (content after frontmatter)
 # Usage: extract_markdown_body <file>
+#
+# Counters here are incremented as `n=$((n + 1))`, never `((n++))`: the latter
+# evaluates to the OLD value, so the first increment from 0 makes the arithmetic
+# command return 1, and under `set -e` that kills the shell on line one. Command
+# substitution happens to survive it; a process substitution or an explicit
+# subshell does not, and would silently yield an empty body.
 extract_markdown_body() {
     local file="$1"
     
@@ -773,7 +779,7 @@ extract_markdown_body() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_frontmatter=1
@@ -1302,14 +1308,19 @@ get_config_file() {
         echo ".ticket-config.yaml"
     fi
 }
-# --- note-checklist.sh ---
+# --- checklist.sh ---
 
-# note-checklist.sh - find unchecked checklist items in a ticket's note file.
+# checklist.sh - find unchecked checklist items in a ticket's files.
 #
-# The note template that ticket.sh hands out can carry checkboxes, but nothing
-# ever looked at whether they got filled in. These functions do that: they scan
-# a note, group the checkboxes by the heading each one sits under, and report
-# (or refuse) based on what is still empty.
+# Both files a ticket owns can carry checkboxes, and nothing used to look at
+# whether they got filled in:
+#
+#   ticket.md   the "## Tasks" list - present in the stock template
+#   note.md     whatever checklist a project puts in its note template
+#
+# These functions scan them, group the checkboxes by the heading each one sits
+# under, and report (or refuse) based on what is still empty. The two files are
+# kept apart throughout, so the output says which one to go and edit.
 #
 # Three states are recognised:
 #   - [x] ...                       done
@@ -1318,30 +1329,28 @@ get_config_file() {
 #
 # A `[-]` without a reason counts as unchecked. Deleting the line is NOT a way
 # to pass, in the sense that a deleted line simply stops being checked - see
-# the ticket for why reconciling against the config template was left out.
+# https://github.com/masuidrive/ticket.sh/issues/4 for why reconciling against
+# the config template was left out.
 #
 # This is a deliberately small Markdown scanner, not a CommonMark parser. It
-# understands what a work note actually contains: ATX headings, list items,
+# understands what these files actually contain: ATX headings, list items,
 # fenced code blocks and indented code blocks. Setext headings (underlined with
-# === or ---) are not treated as headings, because a note's horizontal rules
-# would then be indistinguishable from them.
+# === or ---) are not treated as headings, because a horizontal rule would then
+# be indistinguishable from one.
 #
-# Everything here is pure parameter expansion - no subprocess per line. A note
-# is read once per command, and `list` already showed what per-line process
+# The scanner is pure parameter expansion - no subprocess per line. These files
+# are read once per command, and `list` already showed what per-line process
 # spawning costs.
 
-# Emit one record per checkbox found, in file order:
+# Read Markdown from stdin and emit one record per checkbox, in file order:
 #
-#   <state><TAB><group><TAB><label>
+#   <state><TAB><file><TAB><group><TAB><label>
 #
 # state is one of: done | skip | todo
+# file is the label passed in (ticket.md / note.md)
 # group is the text of the nearest preceding heading, or (ungrouped).
-#
-# Usage: note_checklist_scan <note-file>
-# Prints nothing (and succeeds) when the file is missing or has no checkboxes.
-note_checklist_scan() {
-    local file="$1"
-    [[ -f "$file" ]] || return 0
+_checklist_scan_stream() {
+    local label="$1"
 
     local group="(ungrouped)"
     local fence_char="" fence_len=0
@@ -1453,24 +1462,24 @@ note_checklist_scan() {
             local rest="${BASH_REMATCH[2]}"
             if [[ "${rest:0:1}" == "[" && "${rest:2:1}" == "]" ]]; then
                 local mark="${rest:1:1}"
-                local label="${rest:3}"
-                label="${label#"${label%%[![:space:]]*}"}"
-                label="${label%"${label##*[![:space:]]}"}"
+                local label_text="${rest:3}"
+                label_text="${label_text#"${label_text%%[![:space:]]*}"}"
+                label_text="${label_text%"${label_text##*[![:space:]]}"}"
                 case "$mark" in
                     x|X)
-                        printf 'done\t%s\t%s\n' "$group" "$label"
+                        printf 'done\t%s\t%s\t%s\n' "$label" "$group" "$label_text"
                         ;;
                     ' ')
-                        printf 'todo\t%s\t%s\n' "$group" "$label"
+                        printf 'todo\t%s\t%s\t%s\n' "$label" "$group" "$label_text"
                         ;;
                     '-')
                         # A reason is what makes "not applicable" reviewable.
                         # Without one it is indistinguishable from skipping the
                         # work, so it counts as unchecked.
-                        if [[ "$label" =~ [Ss][Kk][Ii][Pp]:[[:space:]]*[^[:space:]] ]]; then
-                            printf 'skip\t%s\t%s\n' "$group" "$label"
+                        if [[ "$label_text" =~ [Ss][Kk][Ii][Pp]:[[:space:]]*[^[:space:]] ]]; then
+                            printf 'skip\t%s\t%s\t%s\n' "$label" "$group" "$label_text"
                         else
-                            printf 'todo\t%s\t%s\n' "$group" "$label"
+                            printf 'todo\t%s\t%s\t%s\n' "$label" "$group" "$label_text"
                         fi
                         ;;
                     *)
@@ -1486,44 +1495,78 @@ note_checklist_scan() {
         if (( indent == 0 )); then
             in_list=0
         fi
-    done < "$file"
+    done
 
     return 0
 }
 
-# Aggregate a scan into per-group counters, in first-appearance order.
-# Populates these globals (plain indexed arrays - Bash 3.2 has no associative
-# arrays):
+# Scan one file.
 #
-#   NCL_GROUPS[]   group name
-#   NCL_TOTAL[]    checkboxes in the group
-#   NCL_DONE[]     checked, including skipped
-#   NCL_SKIP[]     skipped with a reason
-#   NCL_TODO[]     newline-separated labels of the unchecked ones
-#   NCL_SUM_TOTAL  NCL_SUM_DONE  NCL_SUM_TODO   whole-file totals
+# Usage: checklist_scan <file> <label> [strip_frontmatter]
 #
-# Usage: note_checklist_aggregate <note-file>
-note_checklist_aggregate() {
+# strip_frontmatter is "true" for the ticket body, which carries YAML
+# frontmatter: without stripping it, a `- [ ]` inside a block scalar (a
+# multi-line `description`, say) would be counted as a checkbox. The note file
+# has no frontmatter, and is read as-is - running it through the stripper would
+# risk mistaking a horizontal rule on its first line for a frontmatter fence.
+#
+# Prints nothing (and succeeds) when the file is missing.
+checklist_scan() {
     local file="$1"
+    local label="$2"
+    local strip="${3:-false}"
 
-    NCL_GROUPS=()
-    NCL_TOTAL=()
-    NCL_DONE=()
-    NCL_SKIP=()
-    NCL_TODO=()
-    NCL_SUM_TOTAL=0
-    NCL_SUM_DONE=0
-    NCL_SUM_TODO=0
+    [[ -f "$file" ]] || return 0
 
-    local state group label idx i found
-    while IFS=$'\t' read -r state group label; do
+    if [[ "$strip" == "true" ]]; then
+        _checklist_scan_stream "$label" < <(extract_markdown_body "$file")
+    else
+        _checklist_scan_stream "$label" < "$file"
+    fi
+    return 0
+}
+
+# Aggregate the ticket body and the note into per-group counters, in
+# first-appearance order (ticket first, then note). A group is identified by
+# BOTH the file and the heading text: the same heading in both files stays two
+# groups, so the output can say which file to go and edit.
+#
+# Populates these globals (plain indexed arrays - Bash 3.2 has no associative
+# arrays); one entry per group:
+#
+#   CL_FILES[]     which file the group came from (ticket.md / note.md)
+#   CL_GROUPS[]    heading text
+#   CL_TOTAL[]     checkboxes in the group
+#   CL_DONE[]      checked, including skipped
+#   CL_SKIP[]      skipped with a reason
+#   CL_TODO[]      newline-separated labels of the unchecked ones
+#   CL_SUM_TOTAL   CL_SUM_DONE   CL_SUM_TODO    totals across both files
+#
+# Usage: checklist_aggregate <ticket-file> <note-file>
+# Either path may be missing; a missing file simply contributes nothing.
+checklist_aggregate() {
+    local ticket_file="$1"
+    local note_file="$2"
+
+    CL_FILES=()
+    CL_GROUPS=()
+    CL_TOTAL=()
+    CL_DONE=()
+    CL_SKIP=()
+    CL_TODO=()
+    CL_SUM_TOTAL=0
+    CL_SUM_DONE=0
+    CL_SUM_TODO=0
+
+    local state file group label idx i found
+    while IFS=$'\t' read -r state file group label; do
         [[ -z "$state" ]] && continue
 
         idx=-1
         found=0
         i=0
-        while (( i < ${#NCL_GROUPS[@]} )); do
-            if [[ "${NCL_GROUPS[$i]}" == "$group" ]]; then
+        while (( i < ${#CL_GROUPS[@]} )); do
+            if [[ "${CL_FILES[$i]}" == "$file" && "${CL_GROUPS[$i]}" == "$group" ]]; then
                 idx=$i
                 found=1
                 break
@@ -1531,85 +1574,103 @@ note_checklist_aggregate() {
             i=$((i + 1))
         done
         if [[ $found -eq 0 ]]; then
-            idx=${#NCL_GROUPS[@]}
-            NCL_GROUPS[$idx]="$group"
-            NCL_TOTAL[$idx]=0
-            NCL_DONE[$idx]=0
-            NCL_SKIP[$idx]=0
-            NCL_TODO[$idx]=""
+            idx=${#CL_GROUPS[@]}
+            CL_FILES[$idx]="$file"
+            CL_GROUPS[$idx]="$group"
+            CL_TOTAL[$idx]=0
+            CL_DONE[$idx]=0
+            CL_SKIP[$idx]=0
+            CL_TODO[$idx]=""
         fi
 
-        NCL_TOTAL[$idx]=$(( ${NCL_TOTAL[$idx]} + 1 ))
-        NCL_SUM_TOTAL=$(( NCL_SUM_TOTAL + 1 ))
+        CL_TOTAL[$idx]=$(( ${CL_TOTAL[$idx]} + 1 ))
+        CL_SUM_TOTAL=$(( CL_SUM_TOTAL + 1 ))
         case "$state" in
             done)
-                NCL_DONE[$idx]=$(( ${NCL_DONE[$idx]} + 1 ))
-                NCL_SUM_DONE=$(( NCL_SUM_DONE + 1 ))
+                CL_DONE[$idx]=$(( ${CL_DONE[$idx]} + 1 ))
+                CL_SUM_DONE=$(( CL_SUM_DONE + 1 ))
                 ;;
             skip)
-                NCL_DONE[$idx]=$(( ${NCL_DONE[$idx]} + 1 ))
-                NCL_SKIP[$idx]=$(( ${NCL_SKIP[$idx]} + 1 ))
-                NCL_SUM_DONE=$(( NCL_SUM_DONE + 1 ))
+                CL_DONE[$idx]=$(( ${CL_DONE[$idx]} + 1 ))
+                CL_SKIP[$idx]=$(( ${CL_SKIP[$idx]} + 1 ))
+                CL_SUM_DONE=$(( CL_SUM_DONE + 1 ))
                 ;;
             todo)
-                if [[ -n "${NCL_TODO[$idx]}" ]]; then
-                    NCL_TODO[$idx]="${NCL_TODO[$idx]}"$'\n'"$label"
+                if [[ -n "${CL_TODO[$idx]}" ]]; then
+                    CL_TODO[$idx]="${CL_TODO[$idx]}"$'\n'"$label"
                 else
-                    NCL_TODO[$idx]="$label"
+                    CL_TODO[$idx]="$label"
                 fi
-                NCL_SUM_TODO=$(( NCL_SUM_TODO + 1 ))
+                CL_SUM_TODO=$(( CL_SUM_TODO + 1 ))
                 ;;
         esac
-    done < <(note_checklist_scan "$file")
+    done < <(
+        checklist_scan "$ticket_file" "ticket.md" true
+        checklist_scan "$note_file" "note.md"
+    )
 
     return 0
 }
 
 # The one line printed under every failure, so the reader always sees both ways
 # out: do the thing, or record why it does not apply.
-note_checklist_hint() {
-    echo 'Check them, or mark the ones that do not apply as `- [-] ... — skip: <reason>`.'
+checklist_hint() {
+    echo 'Check them, or mark the ones that do not apply as `- [-] ... - skip: <reason>`.'
 }
 
-# Report every group and what is still empty. Never fails: mid-ticket, the
-# later groups being empty is the normal state, and a check that always failed
-# on day one would just be turned off.
-#
-# Usage: note_checklist_report <note-file>
-note_checklist_report() {
-    local file="$1"
-    note_checklist_aggregate "$file"
-    [[ $NCL_SUM_TOTAL -eq 0 ]] && return 0
-
-    local width=0 i name pad
+# Width of the group-name column, over the entries a caller selects.
+# Usage: _checklist_width <extra> [todo_only]
+_checklist_width() {
+    local extra="$1"
+    local todo_only="${2:-false}"
+    local width=0 i name
     i=0
-    while (( i < ${#NCL_GROUPS[@]} )); do
-        name="${NCL_GROUPS[$i]}"
-        (( ${#name} > width )) && width=${#name}
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "$todo_only" != "true" || -n "${CL_TODO[$i]}" ]]; then
+            name="${CL_GROUPS[$i]}"
+            (( ${#name} > width )) && width=${#name}
+        fi
         i=$((i + 1))
     done
-    width=$((width + 4))
+    echo $((width + extra))
+}
+
+# Report every group and what is still empty, split by file. Never fails:
+# mid-ticket, the later groups being empty is the normal state, and a check
+# that always failed on day one would just be turned off.
+#
+# Usage: checklist_report <ticket-file> <note-file>
+checklist_report() {
+    checklist_aggregate "$1" "$2"
+    [[ $CL_SUM_TOTAL -eq 0 ]] && return 0
+
+    local width
+    width=$(_checklist_width 4)
 
     echo ""
-    echo "Checklist: ${NCL_SUM_DONE} / ${NCL_SUM_TOTAL}"
-    i=0
-    while (( i < ${#NCL_GROUPS[@]} )); do
-        name="${NCL_GROUPS[$i]}"
+    echo "Checklist: ${CL_SUM_DONE} / ${CL_SUM_TOTAL}"
+
+    local i=0 current="" name pad line label
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_FILES[$i]}" != "$current" ]]; then
+            current="${CL_FILES[$i]}"
+            echo "  ${current}"
+        fi
+        name="${CL_GROUPS[$i]}"
         pad=""
         while (( ${#name} + ${#pad} < width )); do pad="${pad} "; done
-        local line="  ${name}${pad}${NCL_DONE[$i]} / ${NCL_TOTAL[$i]}"
-        if [[ "${NCL_DONE[$i]}" == "${NCL_TOTAL[$i]}" ]]; then
+        line="    ${name}${pad}${CL_DONE[$i]} / ${CL_TOTAL[$i]}"
+        if [[ "${CL_DONE[$i]}" == "${CL_TOTAL[$i]}" ]]; then
             line="${line}  done"
-            if (( ${NCL_SKIP[$i]} > 0 )); then
-                line="${line} (${NCL_SKIP[$i]} skipped)"
+            if (( ${CL_SKIP[$i]} > 0 )); then
+                line="${line} (${CL_SKIP[$i]} skipped)"
             fi
         fi
         echo "$line"
-        if [[ -n "${NCL_TODO[$i]}" ]]; then
-            local label
+        if [[ -n "${CL_TODO[$i]}" ]]; then
             while IFS= read -r label; do
-                echo "      - ${label}"
-            done <<< "${NCL_TODO[$i]}"
+                echo "        - ${label}"
+            done <<< "${CL_TODO[$i]}"
         fi
         i=$((i + 1))
     done
@@ -1620,106 +1681,122 @@ note_checklist_report() {
 # Judge a single group, named by the caller. The caller is the one that knows
 # which stage the work is at; ticket.sh only has to match a string.
 #
-# A name that matches no group in the note is a failure, not a pass. Letting it
-# pass would turn a typo into a check that always succeeds - the caller would
-# believe it is enforcing something while nothing is being looked at, which is
-# the same hole this whole feature exists to close.
+# The name is matched against heading text alone, with no file qualifier: a
+# group by that name in EITHER file is judged, and both together if it appears
+# in both. Callers say which stage they expect to be finished, not which file
+# the author chose to keep it in.
 #
-# Usage: note_checklist_require <note-file> <group-name>
-note_checklist_require() {
-    local file="$1"
-    local want="$2"
+# A name that matches nothing is a failure, not a pass. Letting it pass would
+# turn a typo into a check that always succeeds - the caller would believe it
+# is enforcing something while nothing is being looked at, which is the same
+# hole this whole feature exists to close.
+#
+# Usage: checklist_require <ticket-file> <note-file> <group-name>
+checklist_require() {
+    local ticket_file="$1"
+    local note_file="$2"
+    local want="$3"
 
-    note_checklist_aggregate "$file"
+    checklist_aggregate "$ticket_file" "$note_file"
 
-    local i=0 idx=-1
-    while (( i < ${#NCL_GROUPS[@]} )); do
-        if [[ "${NCL_GROUPS[$i]}" == "$want" ]]; then
-            idx=$i
-            break
+    local i=0 matched=0 total=0 done_count=0 skipped=0 todo=""
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_GROUPS[$i]}" == "$want" ]]; then
+            matched=1
+            total=$(( total + ${CL_TOTAL[$i]} ))
+            done_count=$(( done_count + ${CL_DONE[$i]} ))
+            skipped=$(( skipped + ${CL_SKIP[$i]} ))
+            if [[ -n "${CL_TODO[$i]}" ]]; then
+                if [[ -n "$todo" ]]; then
+                    todo="${todo}"$'\n'"${CL_TODO[$i]}"
+                else
+                    todo="${CL_TODO[$i]}"
+                fi
+            fi
         fi
         i=$((i + 1))
     done
 
-    if [[ $idx -lt 0 ]]; then
-        echo "✗ No checklist group named \"${want}\" in the note" >&2
-        echo "" >&2
-        if [[ ${#NCL_GROUPS[@]} -eq 0 ]]; then
-            echo "The note has no checkboxes at all: ${file}" >&2
+    if [[ $matched -eq 0 ]]; then
+        echo "✗ No checklist group named \"${want}\""
+        echo ""
+        if [[ ${#CL_GROUPS[@]} -eq 0 ]]; then
+            echo "Neither the ticket nor the note has any checkboxes."
         else
-            echo "Groups in ${file}:" >&2
+            echo "Groups that do exist:"
+            local current=""
             i=0
-            while (( i < ${#NCL_GROUPS[@]} )); do
-                echo "  - ${NCL_GROUPS[$i]}" >&2
+            while (( i < ${#CL_GROUPS[@]} )); do
+                if [[ "${CL_FILES[$i]}" != "$current" ]]; then
+                    current="${CL_FILES[$i]}"
+                    echo "  ${current}"
+                fi
+                echo "    - ${CL_GROUPS[$i]}"
                 i=$((i + 1))
             done
         fi
         return 1
     fi
 
-    if [[ -z "${NCL_TODO[$idx]}" ]]; then
-        local msg="✓ ${want}: ${NCL_DONE[$idx]} / ${NCL_TOTAL[$idx]}"
-        if (( ${NCL_SKIP[$idx]} > 0 )); then
-            msg="${msg}  (${NCL_SKIP[$idx]} skipped)"
+    if [[ -z "$todo" ]]; then
+        local msg="✓ ${want}: ${done_count} / ${total}"
+        if (( skipped > 0 )); then
+            msg="${msg}  (${skipped} skipped)"
         fi
         echo "$msg"
         return 0
     fi
 
-    echo "✗ ${want}: ${NCL_DONE[$idx]} / ${NCL_TOTAL[$idx]}"
+    echo "✗ ${want}: ${done_count} / ${total}"
     echo ""
     echo "  Unchecked"
     local label
     while IFS= read -r label; do
         echo "    - ${label}"
-    done <<< "${NCL_TODO[$idx]}"
+    done <<< "$todo"
     echo ""
-    note_checklist_hint
+    checklist_hint
     return 1
 }
 
-# Judge every group. Used by close's preflight.
-# Succeeds when the note has no checkboxes at all, so projects that never put
-# any in their note template are unaffected.
+# Judge every group in both files. Used by close's preflight.
+# Succeeds when there are no checkboxes at all, so projects that put none in
+# either template are unaffected.
 #
-# Usage: note_checklist_gate <note-file>
-note_checklist_gate() {
-    local file="$1"
-    note_checklist_aggregate "$file"
-    [[ $NCL_SUM_TODO -eq 0 ]] && return 0
+# Usage: checklist_gate <ticket-file> <note-file>
+checklist_gate() {
+    checklist_aggregate "$1" "$2"
+    [[ $CL_SUM_TODO -eq 0 ]] && return 0
 
-    local width=0 i name pad
-    i=0
-    while (( i < ${#NCL_GROUPS[@]} )); do
-        if [[ -n "${NCL_TODO[$i]}" ]]; then
-            name="${NCL_GROUPS[$i]}"
-            (( ${#name} > width )) && width=${#name}
-        fi
-        i=$((i + 1))
-    done
-    width=$((width + 3))
+    local width
+    width=$(_checklist_width 3 true)
 
     local noun="items remain"
-    [[ $NCL_SUM_TODO -eq 1 ]] && noun="item remains"
-    echo "✗ ${NCL_SUM_TODO} unchecked ${noun} in the note" >&2
+    [[ $CL_SUM_TODO -eq 1 ]] && noun="item remains"
+    echo "✗ ${CL_SUM_TODO} unchecked ${noun}" >&2
     echo "" >&2
-    i=0
-    while (( i < ${#NCL_GROUPS[@]} )); do
-        if [[ -n "${NCL_TODO[$i]}" ]]; then
-            name="${NCL_GROUPS[$i]}"
+
+    local i=0 current="" name pad count label
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ -n "${CL_TODO[$i]}" ]]; then
+            if [[ "${CL_FILES[$i]}" != "$current" ]]; then
+                current="${CL_FILES[$i]}"
+                echo "  ${current}" >&2
+            fi
+            name="${CL_GROUPS[$i]}"
             pad=""
             while (( ${#name} + ${#pad} < width )); do pad="${pad} "; done
-            local count=0 label
-            while IFS= read -r label; do count=$((count + 1)); done <<< "${NCL_TODO[$i]}"
-            echo "  ${name}${pad}${count}" >&2
+            count=0
+            while IFS= read -r label; do count=$((count + 1)); done <<< "${CL_TODO[$i]}"
+            echo "    ${name}${pad}${count}" >&2
             while IFS= read -r label; do
-                echo "      - ${label}" >&2
-            done <<< "${NCL_TODO[$i]}"
+                echo "        - ${label}" >&2
+            done <<< "${CL_TODO[$i]}"
         fi
         i=$((i + 1))
     done
     echo "" >&2
-    note_checklist_hint >&2
+    checklist_hint >&2
     return 1
 }
 
@@ -1734,7 +1811,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20260826.192141
+# Version: 20260827.022515
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
 # Perfect for small teams, solo developers, and AI coding assistants.
@@ -1826,7 +1903,7 @@ SCRIPT_COMMAND=$(get_script_command)
 
 
 # Global variables
-VERSION="20260826.192141"  # This will be replaced during build
+VERSION="20260827.022515"  # This will be replaced during build
 CONFIG_FILE=""  # Will be set dynamically by get_config_file()
 CURRENT_TICKET_LINK="current-ticket.md"
 CURRENT_NOTE_LINK="current-note.md"
@@ -1846,7 +1923,7 @@ DEFAULT_CLOSE_SUCCESS_MESSAGE=""
 DEFAULT_WORKTREE_MODE="false"
 DEFAULT_WORKTREE_DIR=""  # Empty means auto: ../<project-name>.worktrees
 DEFAULT_NO_VERIFY="false"  # Run Git hooks on commits ticket.sh makes itself
-DEFAULT_REQUIRE_NOTE_CHECKLIST="false"  # close does not judge the note's checklist
+DEFAULT_REQUIRE_CHECKLIST="false"  # close does not judge the ticket/note checklists
 DEFAULT_CONTENT='# Ticket Overview
 
 Write the overview and tasks for this ticket here.
@@ -1931,13 +2008,13 @@ be recognized by every command; they are never auto-migrated.
   - \`--copy-file <path>\` (repeatable) copies the given file from the main repo into the new worktree, appended to the \`worktree_copy_files\` config list. Only applied when a worktree is created. Existing files in the target are never overwritten; missing sources warn and continue. Typical use: bringing gitignored \`.env\` into the worktree.
 - \`$SCRIPT_COMMAND restore\` - Restore current-ticket.md symlink from branch name
 - \`$SCRIPT_COMMAND check [--require "<group name>"]\` - Check current directory and ticket/branch synchronization status
-  - Also reports the note's checklist: every checkbox, grouped by the nearest preceding heading above it. \`- [x]\` is done, \`- [ ]\` is unchecked, and \`- [-] ... - skip: <reason>\` marks an item that does not apply to this ticket (a \`[-]\` with no reason counts as unchecked). Checkboxes inside code blocks are ignored; ones merely nested under another item are not.
+  - Also reports the checklists in **both** the ticket body (its \`## Tasks\` list) and the note, listed per file. Every checkbox is grouped by the nearest preceding heading above it. \`- [x]\` is done, \`- [ ]\` is unchecked, and \`- [-] ... - skip: <reason>\` marks an item that does not apply to this ticket (a \`[-]\` with no reason counts as unchecked). Checkboxes inside code blocks are ignored; ones merely nested under another item are not. The ticket's YAML frontmatter is skipped, so a \`- [ ]\` inside a multi-line \`description\` is not counted.
   - Plain \`check\` never fails on an unfinished checklist - mid-ticket, the later groups being empty is the normal state.
-  - \`--require "<group name>"\` judges that one group and exits 1 if anything in it is unchecked. Use it when the caller knows which stage the work is at; ticket.sh has no notion of stages. A name that matches no group is an error, not a pass, so a typo cannot become a check that always succeeds.
+  - \`--require "<group name>"\` judges that one group and exits 1 if anything in it is unchecked. The name matches heading text in either file, so callers name the stage, not the file. Use it when the caller knows which stage the work is at; ticket.sh has no notion of stages. A name that matches no group is an error, not a pass, so a typo cannot become a check that always succeeds.
 - \`$SCRIPT_COMMAND close [--no-push] [--force|-f] [--no-delete-remote] [--keep-worktree] [--dry-run|-n]\` - Complete current ticket (squash merge to default branch)
   - \`--dry-run\` (\`-n\`) runs all preflight checks (clean working dir, branch, ticket state, base_branch existence, worktree main repo state) and exits before any commit/merge. Useful for catching format mistakes or stale state before the real close. Note: pre-commit hooks are NOT executed by --dry-run.
   - The squash commit's subject is \`[<ticket-name>] <description>\` (description folded onto one line), and its body is the ticket's **Markdown body only** - the YAML frontmatter is never included. This is fixed behavior with no config key. Keeping the body in the message is what lets \`git blame\` reach the reasoning without opening \`tickets/done/\`.
-  - With \`require_note_checklist: true\` in config, close refuses while the note has unchecked items, and lists them. Off by default. \`--force\` does not bypass it: the way out is \`- [-] ... - skip: <reason>\`, which leaves the reason in the note. \`--dry-run\` surfaces it too.
+  - With \`require_checklist: true\` in config, close refuses while the ticket body or the note has unchecked items, and lists them per file. Off by default. \`--force\` does not bypass it: the way out is \`- [-] ... - skip: <reason>\`, which leaves the reason in the file. \`--dry-run\` surfaces it too.
   - From a worktree, close refuses to merge if the main repo is on a non-default branch or has uncommitted changes (protects parallel workers).
   - **Coding agents (Claude Code / Codex / etc.) must pass \`--keep-worktree\`**: without it, the worker's worktree is deleted and the agent's shell cwd points to a removed directory → every subsequent Bash tool call fails.
   - \`--no-merge [--closed-at <ISO8601-UTC>] <ticket-name>\` - Skip the squash-merge (assume the ticket's changes are already on the base branch, e.g. after a GitHub PR merge). Only set closed_at, move the ticket/note to done/, commit and push. Requires \`<ticket-name>\`. \`--closed-at\` overrides closed_at with a full ISO8601 UTC value (default: now).
@@ -2121,15 +2198,16 @@ no_verify: $DEFAULT_NO_VERIFY
 # Set to false if you want to keep remote branches for history
 delete_remote_on_close: $DEFAULT_DELETE_REMOTE_ON_CLOSE
 
-# Refuse to close while the note still has unchecked checklist items.
-# Checkboxes are grouped by the nearest preceding heading. Three states are
-# recognised: '- [x]' done, '- [ ]' unchecked, and '- [-] ... - skip: <reason>'
-# for an item that does not apply to this ticket. Off by default, because
-# existing notes are full of boxes nobody ever filled in and turning this on
-# for them would block every close at once.
+# Refuse to close while the ticket's Tasks list or the note still has unchecked
+# checklist items. Both files are read; checkboxes are grouped by the nearest
+# preceding heading, per file. Three states are recognised: '- [x]' done,
+# '- [ ]' unchecked, and '- [-] ... - skip: <reason>' for an item that does not
+# apply to this ticket. Off by default, because existing tickets and notes are
+# full of boxes nobody ever filled in and turning this on for them would block
+# every close at once.
 # 'check' always reports the state regardless of this setting, and
 # 'check --require "<group>"' judges a single group on demand.
-require_note_checklist: $DEFAULT_REQUIRE_NOTE_CHECKLIST
+require_checklist: $DEFAULT_REQUIRE_CHECKLIST
 
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)
@@ -2428,7 +2506,7 @@ EOF
     echo "1. Before closing:"
     echo "   - Review the ticket content and description, collect information from \`current-ticket/note.md\` and other notes, and summarize the final work results so anyone reading the ticket can understand what was done"
     echo "   - Check all tasks in the checklist are completed (mark with \`[x]\`)"
-    echo "   - Settle the checklist in \`current-ticket/note.md\` as you go, not at the end: mark each box \`[x]\` when you do the thing, or \`- [-] ... - skip: <reason>\` when it does not apply to this ticket. Run \`$SCRIPT_COMMAND check\` to see what is still open"
+    echo "   - Settle the checkboxes in \`current-ticket/ticket.md\` and \`current-ticket/note.md\` as you go, not at the end: mark each box \`[x]\` when you do the thing, or \`- [-] ... - skip: <reason>\` when it does not apply to this ticket. Run \`$SCRIPT_COMMAND check\` to see what is still open in both files"
     echo "   - Commit all your work: \`git add . && git commit -m \"your message\"\`"
     echo "   - Get user approval before proceeding"
     echo "2. Complete: \`$SCRIPT_COMMAND close\` (moves the whole \`tickets/<TICKETNAME>/\` directory to \`tickets/done/<TICKETNAME>/\` in a single commit that also stamps \`closed_at\`)"
@@ -2892,6 +2970,40 @@ emit_active_ticket_paths() {
     echo ""
 }
 
+# The checklist config key was named require_note_checklist while the check only
+# looked at the note. It now reads the ticket body too, so the key is
+# require_checklist and the old name is gone.
+#
+# Silently ignoring the old name is the one outcome to avoid: a config that says
+# require_note_checklist: true would stop gating without saying so, which is
+# exactly the "it is there and nobody looks at it" failure the check exists to
+# end. So an enabled old key is an error. A disabled one only warns - nothing is
+# being switched off behind the user's back, it is just stale.
+#
+# Assumes the config has already been parsed by yaml_parse.
+check_legacy_checklist_key() {
+    local legacy
+    legacy=$(yaml_get "require_note_checklist" 2>/dev/null || echo "")
+    [[ -z "$legacy" ]] && return 0
+
+    if [[ "$legacy" == "true" ]]; then
+        cat >&2 << EOF
+Error: 'require_note_checklist' has been renamed
+The checklist check now reads the ticket body as well as the note, so the key is
+'require_checklist'. Leaving the old name in place would silently stop gating
+close. Please rename it in $CONFIG_FILE:
+
+  require_checklist: true
+
+EOF
+        return 1
+    fi
+
+    echo "Warning: 'require_note_checklist' in $CONFIG_FILE is no longer read." >&2
+    echo "It is now called 'require_checklist'. Remove or rename the old key." >&2
+    return 0
+}
+
 # List tickets
 cmd_list() {
     local filter_status=""
@@ -3096,7 +3208,7 @@ EOF
         fi
         echo
         
-        ((displayed++))
+        displayed=$((displayed + 1))
     done < "$sorted_file" || true
     
     rm -f "$sorted_file"
@@ -3900,6 +4012,7 @@ cmd_check() {
     local default_branch=$(yaml_get "default_branch" || echo "$DEFAULT_BRANCH")
     local tickets_dir=$(yaml_get "tickets_dir" || echo "$DEFAULT_TICKETS_DIR")
     local branch_prefix=$(yaml_get "branch_prefix" || echo "$DEFAULT_BRANCH_PREFIX")
+    check_legacy_checklist_key || return 1
     
     # Get current branch
     local current_branch=$(get_current_branch)
@@ -4074,21 +4187,22 @@ cmd_check() {
         return 0
     fi
 
-    local note_file
-    note_file=$(get_note_file "$checklist_ticket" "$tickets_dir")
+    local checklist_ticket_file checklist_note_file
+    checklist_ticket_file=$(get_ticket_file "$checklist_ticket" "$tickets_dir")
+    checklist_note_file=$(get_note_file "$checklist_ticket" "$tickets_dir")
 
     if [[ "$require_given" == "true" ]]; then
-        if [[ ! -f "$note_file" ]]; then
+        if [[ ! -f "$checklist_ticket_file" && ! -f "$checklist_note_file" ]]; then
             echo ""
-            echo "✗ No note file to judge: $note_file"
+            echo "✗ Nothing to judge: neither $checklist_ticket_file nor $checklist_note_file exists"
             return 1
         fi
         echo ""
-        note_checklist_require "$note_file" "$require_group" || return 1
+        checklist_require "$checklist_ticket_file" "$checklist_note_file" "$require_group" || return 1
         return 0
     fi
 
-    note_checklist_report "$note_file"
+    checklist_report "$checklist_ticket_file" "$checklist_note_file"
 }
 
 # Finalize a ticket without merging (close --no-merge).
@@ -4376,7 +4490,8 @@ EOF
     local auto_push=$(yaml_get "auto_push" || echo "$DEFAULT_AUTO_PUSH")
     local delete_remote_on_close=$(yaml_get "delete_remote_on_close" || echo "$DEFAULT_DELETE_REMOTE_ON_CLOSE")
     local close_success_message=$(yaml_get "close_success_message" || echo "$DEFAULT_CLOSE_SUCCESS_MESSAGE")
-    local require_note_checklist=$(yaml_get "require_note_checklist" || echo "$DEFAULT_REQUIRE_NOTE_CHECKLIST")
+    local require_checklist=$(yaml_get "require_checklist" || echo "$DEFAULT_REQUIRE_CHECKLIST")
+    check_legacy_checklist_key || return 1
     
     # Check current branch
     local current_branch=$(get_current_branch)
@@ -4492,14 +4607,15 @@ EOF
         fi
     fi
 
-    # Refuse to close while the note still has unchecked checklist items.
+    # Refuse to close while the ticket body or the note still has unchecked
+    # checklist items.
     # Deliberately NOT bypassed by --force: --force is about the state of the
     # Git tree (a ticket file that also moved on the base branch), and the way
     # out of this one is to mark the item `- [-] ... - skip: <reason>`, which
-    # leaves the reason in the note where a reader can weigh it. An escape
+    # leaves the reason in the file where a reader can weigh it. An escape
     # hatch that records nothing would put the checklist right back where it
     # was - present, and never looked at.
-    if [[ "$require_note_checklist" == "true" ]]; then
+    if [[ "$require_checklist" == "true" ]]; then
         local _close_note_file
         if [[ "${ticket_file##*/}" == "ticket.md" ]]; then
             _close_note_file="${ticket_file%/ticket.md}/note.md"
@@ -4507,8 +4623,9 @@ EOF
             _close_note_file="${ticket_file%.md}-note.md"
         fi
         # A ticket with no note file at all (note_content undefined in config)
-        # has nothing to judge, and note_checklist_gate passes on it.
-        if ! note_checklist_gate "$_close_note_file"; then
+        # simply contributes nothing, and checklist_gate passes when neither
+        # file holds a checkbox.
+        if ! checklist_gate "$ticket_file" "$_close_note_file"; then
             echo "Nothing was closed." >&2
             return 1
         fi
@@ -5243,7 +5360,7 @@ automatically.
 1. Before closing:
    - Review the ticket content and description; collect information from `current-ticket/note.md` and summarize the final work so any reader can understand what was done on this branch.
    - Check all checklist tasks are completed (mark with `[x]`).
-   - Settle the checklist in `current-ticket/note.md` as you go, not at the end: mark each box `[x]` when you actually do the thing, or `- [-] ... - skip: <reason>` when it does not apply to this ticket. `./ticket.sh check` reports what is still open, and with `require_note_checklist: true` in config, `close` refuses until nothing is.
+   - Settle the checkboxes in `current-ticket/ticket.md` and `current-ticket/note.md` as you go, not at the end: mark each box `[x]` when you actually do the thing, or `- [-] ... - skip: <reason>` when it does not apply to this ticket. `./ticket.sh check` reports what is still open in both files, and with `require_checklist: true` in config, `close` refuses until nothing is.
    - Commit all your work: `git add . && git commit -m "your message"`.
    - Get user approval before proceeding.
 2. Complete: `./ticket.sh close`
@@ -5445,7 +5562,7 @@ epic_extract_frontmatter() {
     local in_fm=0 line_num=0 out=""
     while IFS= read -r line; do
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_fm=1
             continue
@@ -5464,7 +5581,7 @@ epic_extract_body() {
     local in_fm=0 past=0 line_num=0 out=""
     while IFS= read -r line; do
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_fm=1
             continue

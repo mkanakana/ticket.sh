@@ -4,7 +4,7 @@ base_branch: default  # Override base branch for start/close (default: use defau
 description: "チェックリストの検査対象に ticket.md を加え、ファイル別に報告する。config キーを require_checklist に改名"
 created_at: "2026-08-27T01:36:36Z"
 started_at: 2026-08-27T01:37:03Z # Do not modify manually
-closed_at: null   # Do not modify manually
+closed_at: 2026-08-27T02:30:25Z # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
 
@@ -73,6 +73,23 @@ note 専用ではなくなるので、以下を改名する。#3 のリリース
   あるため）。ただし報告のみで exit 0 なので実害は無い。
 - `close` は `require_checklist` が true のときだけ止まる。既定は false のまま。
 
+## 追加で入れたもの（作業中のユーザ指示）
+
+`yaml-sh/yaml-sh` を削除し、`yaml-sh/README.md` を直す。別チケットにはしない。
+
+調査の結果、この古いコピーは `yaml-sh/test.sh` を当てると **27 中 2 しか通らない**、
+つまり壊れていた。「オリジナル」ではなく、`yaml-sh.sh` と同じコミット `631d8d4` で
+同一内容として生まれ、直後から `.sh` だけが修正を受け続けた双子だった。
+
+README の導入手順も現物と合っていなかった:
+
+- curl URL が `raw.githubusercontent.com/**yourusername**/yaml-sh/main/yaml-sh`
+  というプレースホルダのまま（実在しない）
+- `chmod +x` を案内しているが、source して使うライブラリで実行属性は不要
+- `source yaml-sh` が 4 箇所（正しくは `yaml-sh.sh`）
+- `cd ticket-sh` / `ticket-sh/README.md` / `./test-final.sh` など、
+  プロジェクト再編前のパスが残存
+
 ## 想定する実装箇所
 
 - `lib/note-checklist.sh` → `lib/checklist.sh`（frontmatter スキップ、レコードに
@@ -84,21 +101,23 @@ note 専用ではなくなるので、以下を改名する。#3 のリリース
 
 ## Tasks
 
-- [ ] スキャンで YAML frontmatter を飛ばす（1行目が `---` のとき）
-- [ ] レコードにファイル名を持たせ、複数ファイルを走査できるようにする
-- [ ] 集計・レポートをファイル別の入れ子にする
-- [ ] `--require` は見出し名でファイルをまたいで判定する
-- [ ] gate の出力もファイル別にする
-- [ ] config キーを `require_checklist` に改名
-- [ ] 古い `require_note_checklist` が残っていたらエラーで止める
-- [ ] `lib/checklist.sh` / `checklist_*()` / `test/test-checklist.sh` に改名
-- [ ] テストを更新・追加（ticket.md 側、frontmatter、ファイル別出力、キー改名）
-- [ ] 旧実装に戻すとテストが落ちることを確認する（negative control）
-- [ ] Run tests before closing and pass all tests (No exceptions)
-- [ ] Run `bash build.sh` to build the project
-- [ ] Update documentation if necessary
-  - [ ] Update README.*.md
-  - [ ] Update spec.*.md
-  - [ ] Update DEV.md
-  - [ ] help text（`check` と `close` の項）
-- [ ] Get developer approval before closing
+- [x] スキャンで YAML frontmatter を飛ばす（1行目が `---` のとき）
+- [x] レコードにファイル名を持たせ、複数ファイルを走査できるようにする
+- [x] 集計・レポートをファイル別の入れ子にする
+- [x] `--require` は見出し名でファイルをまたいで判定する
+- [x] gate の出力もファイル別にする
+- [x] config キーを `require_checklist` に改名
+- [x] 古い `require_note_checklist` が残っていたらエラーで止める
+- [x] `lib/checklist.sh` / `checklist_*()` / `test/test-checklist.sh` に改名
+- [x] テストを更新・追加（ticket.md 側、frontmatter、ファイル別出力、キー改名）
+- [x] 旧実装に戻すとテストが落ちることを確認する（negative control）
+- [x] Run tests before closing and pass all tests (No exceptions)
+- [x] Run `bash build.sh` to build the project
+- [x] Update documentation if necessary
+  - [x] Update README.*.md
+  - [x] Update spec.*.md
+  - [x] Update DEV.md
+  - [x] help text（`check` と `close` の項）
+- [x] `yaml-sh/yaml-sh`（実体から取り残された壊れたコピー）を削除する
+- [x] `yaml-sh/README.md` の導入手順・パス・テスト手順を現物に合わせる
+- [x] Get developer approval before closing

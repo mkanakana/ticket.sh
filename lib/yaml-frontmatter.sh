@@ -28,7 +28,7 @@ update_yaml_frontmatter_field() {
     while IFS= read -r line; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             frontmatter_start=1
@@ -52,7 +52,7 @@ update_yaml_frontmatter_field() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             echo "$line" >> "$temp_file"
@@ -122,7 +122,7 @@ extract_yaml_frontmatter() {
     while IFS= read -r line; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_frontmatter=1
@@ -144,6 +144,12 @@ extract_yaml_frontmatter() {
 
 # Extract markdown body (content after frontmatter)
 # Usage: extract_markdown_body <file>
+#
+# Counters here are incremented as `n=$((n + 1))`, never `((n++))`: the latter
+# evaluates to the OLD value, so the first increment from 0 makes the arithmetic
+# command return 1, and under `set -e` that kills the shell on line one. Command
+# substitution happens to survive it; a process substitution or an explicit
+# subshell does not, and would silently yield an empty body.
 extract_markdown_body() {
     local file="$1"
     
@@ -160,7 +166,7 @@ extract_markdown_body() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Remove CRLF line endings
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_frontmatter=1

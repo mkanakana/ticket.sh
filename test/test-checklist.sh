@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 
-# Tests for the note checklist check (issue #3).
+# Tests for the ticket/note checklist check (issues #3 and the follow-up that
+# brought the ticket body in).
 #
-# The note template ticket.sh hands out can carry checkboxes, and nothing used
-# to look at whether they were filled in. `check` now reports their state,
-# `check --require "<group>"` judges one group, and `close` refuses while any
-# are unchecked (opt-in via require_note_checklist).
+# Both files a ticket owns can carry checkboxes - the ticket's `## Tasks` list
+# and whatever the note template holds - and nothing used to look at whether
+# they were filled in. `check` now reports them per file, `check --require
+# "<group>"` judges one group across both, and `close` refuses while any are
+# unchecked (opt-in via require_checklist).
 #
-# The parser cases matter as much as the plumbing: a work note is full of
-# pasted output and quoted templates, so a checkbox inside a code block must
-# not count, while a checkbox merely indented under another one must.
+# The parser cases matter as much as the plumbing: these files are full of
+# pasted output and quoted templates, so a checkbox inside a code block must not
+# count, while a checkbox merely indented under another one must.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/test-helpers.sh"
 
-echo "=== note checklist Test Suite ==="
+echo "=== checklist Test Suite ==="
 echo
 
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TEST_DIR="${REPO_ROOT}/tmp/test-note-checklist-$(date +%s)"
+TEST_DIR="${REPO_ROOT}/tmp/test-checklist-$(date +%s)"
 mkdir -p "${REPO_ROOT}/tmp"
 rm -rf "$TEST_DIR"
 mkdir -p "$TEST_DIR"
@@ -35,7 +37,9 @@ NC='\033[0m'
 pass() { echo -e "  ${GREEN}✓${NC} $1"; PASSED=$((PASSED + 1)); }
 fail() { echo -e "  ${RED}✗${NC} $1"; [[ -n "${2:-}" ]] && echo "    $2"; FAILED=$((FAILED + 1)); }
 
-source "${REPO_ROOT}/lib/note-checklist.sh"
+# checklist_scan strips the ticket's frontmatter through this.
+source "${REPO_ROOT}/lib/yaml-frontmatter.sh"
+source "${REPO_ROOT}/lib/checklist.sh"
 
 # Build a fresh repo with the ticket system initialized. No remote, so pushing
 # is turned off.
@@ -63,15 +67,16 @@ make_repo() {
     echo "$dir"
 }
 
-# Replace the note template in the config with one carrying a checklist, and
-# optionally turn the close gate on.
-# Usage: set_note_template <repo-dir> <gate:true|false>
-set_note_template() {
+# Replace BOTH templates in the config with small known ones, so counts in the
+# assertions below do not depend on the stock templates, and optionally turn the
+# close gate on. Section 8 covers the stock ticket template separately.
+# Usage: set_templates <repo-dir> <gate:true|false>
+set_templates() {
     local dir="$1" gate="$2"
     cd "$dir" || return 1
     awk -v gate="$gate" '
         /^note_content: \|/ {
-            inblk = 1
+            note = 1
             print "note_content: |"
             print "  # Work Notes for $$TICKET_NAME$$"
             print ""
@@ -86,13 +91,28 @@ set_note_template() {
             print ""
             next
         }
-        inblk && /^# Ticket template/ { inblk = 0 }
-        inblk { next }
-        /^require_note_checklist:/ { print "require_note_checklist: " gate; next }
+        note && /^# Ticket template/ { note = 0 }
+        note { next }
+        /^default_content: \|/ {
+            body = 1
+            print "default_content: |"
+            print "  # Ticket Overview"
+            print ""
+            print "  ## Tasks"
+            print ""
+            print "  - [ ] write the thing"
+            print ""
+            print "  ## Review"
+            print ""
+            print "  - [ ] ticket-side review"
+            next
+        }
+        body { next }
+        /^require_checklist:/ { print "require_checklist: " gate; next }
         { print }
     ' .ticket-config.yaml > .ticket-config.yaml.new
     mv .ticket-config.yaml.new .ticket-config.yaml
-    git add -A && git commit -q -m "Note template with a checklist"
+    git add -A && git commit -q -m "Templates with checklists"
 }
 
 # new -> commit -> start -> make a work commit. Echoes the ticket name.
@@ -110,9 +130,9 @@ begin_ticket() {
     echo "$ticket"
 }
 
-# Settle one item in a note file and commit. Labels used here are free of
-# regex metacharacters.
-# Usage: mark_item <note-file> <label> <mark> [suffix]
+# Settle one item in a file and commit. The labels used here are free of regex
+# metacharacters.
+# Usage: mark_item <file> <label> <mark> [suffix]
 #   mark   x for done, - for skipped
 #   suffix appended after the label (the skip reason)
 mark_item() {
@@ -122,7 +142,7 @@ mark_item() {
         return 1
     fi
     sed_i "s|^- \\[ \\] ${label}\$|- [${mark}] ${label}${suffix}|" "$file"
-    git add -A && git commit -q -m "Update note"
+    git add -A && git commit -q -m "Update file"
 }
 
 # ---------------------------------------------------------------------------
@@ -172,7 +192,7 @@ Quoting the template:
 - [ ] under a heading with a closing sequence
 EOF
 
-SCAN=$(note_checklist_scan n1.md)
+SCAN=$(checklist_scan n1.md "note.md")
 
 if echo "$SCAN" | grep -q "fenced-should-not-count"; then
     fail "a checkbox inside a backtick fence was counted"
@@ -222,25 +242,25 @@ else
     pass "markers outside the vocabulary are left alone"
 fi
 
-if echo "$SCAN" | grep -q "^done	Ticket contract check	AC observable"; then
-    pass "an uppercase X counts as done"
+if echo "$SCAN" | grep -q "^done	note.md	Ticket contract check	AC observable"; then
+    pass "an uppercase X counts as done, tagged with its file"
 else
     fail "expected [X] to count as done" "$SCAN"
 fi
 
-if echo "$SCAN" | grep -q "^todo	(ungrouped)	before any heading"; then
+if echo "$SCAN" | grep -q "^todo	note.md	(ungrouped)	before any heading"; then
     pass "a checkbox before any heading lands in (ungrouped)"
 else
     fail "expected the (ungrouped) fallback" "$SCAN"
 fi
 
-if echo "$SCAN" | grep -q "^todo	Closing sequence	under a heading"; then
+if echo "$SCAN" | grep -q "^todo	note.md	Closing sequence	under a heading"; then
     pass "a heading's closing ## sequence is not part of the group name"
 else
     fail "expected the group name without its closing sequence" "$SCAN"
 fi
 
-if echo "$SCAN" | grep -q "^todo	Implementation log	commits are logically scoped"; then
+if echo "$SCAN" | grep -q "^todo	note.md	Implementation log	commits are logically scoped"; then
     pass "a checkbox is grouped under the nearest preceding heading"
 else
     fail "expected grouping by nearest heading" "$SCAN"
@@ -248,25 +268,112 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "2. Counting and reporting"
+echo "2. The ticket body: frontmatter is skipped"
 # ---------------------------------------------------------------------------
 cd "$TEST_DIR"
-cat > n2.md <<'EOF'
-## Implementation log
-- [x] one
-- [-] two - skip: not applicable
-- [ ] three
+cat > t1.md <<'EOF'
+---
+priority: 2
+description: |
+  a multi-line description
+  - [ ] frontmatter-should-not-count
+created_at: "2026-08-27T00:00:00Z"
+started_at: null  # Do not modify manually
+---
 
-## Review
-- [ ] four
+# Ticket Overview
+
+## Tasks
+
+- [ ] write the thing
+- [x] already done
 EOF
 
-REPORT=$(note_checklist_report n2.md)
+SCAN=$(checklist_scan t1.md "ticket.md" true)
 
-if echo "$REPORT" | grep -q "Checklist: 2 / 4"; then
-    pass "skipped items count towards done in the total"
+if echo "$SCAN" | grep -q "frontmatter-should-not-count"; then
+    fail "a checkbox inside the YAML frontmatter was counted"
 else
-    fail "expected 'Checklist: 2 / 4'" "$REPORT"
+    pass "the ticket's frontmatter is skipped"
+fi
+
+if echo "$SCAN" | grep -q "^todo	ticket.md	Tasks	write the thing"; then
+    pass "the ticket body's Tasks list is scanned and tagged ticket.md"
+else
+    fail "expected the ticket body to be scanned" "$SCAN"
+fi
+
+# extract_markdown_body used to increment its line counter with ((line_num++)),
+# which evaluates to the OLD value - so the very first increment from 0 returned
+# 1 and, under `set -e`, killed the subshell before a single line was emitted.
+# Command substitution survived it, which is why close never noticed; a process
+# substitution (what checklist_scan uses) came back empty instead.
+BODY=$(bash -c "set -euo pipefail
+    source '${REPO_ROOT}/lib/yaml-frontmatter.sh'
+    while IFS= read -r l; do echo \"\$l\"; done < <(extract_markdown_body '${TEST_DIR}/t1.md')")
+if echo "$BODY" | grep -q "write the thing"; then
+    pass "extract_markdown_body survives set -e in a subshell"
+else
+    fail "extract_markdown_body died before emitting anything" "$BODY"
+fi
+
+# A file with no frontmatter still comes through whole.
+cat > t2.md <<'EOF'
+## Tasks
+
+- [ ] no frontmatter here
+EOF
+if checklist_scan t2.md "ticket.md" true | grep -q "no frontmatter here"; then
+    pass "a ticket file without frontmatter is scanned whole"
+else
+    fail "expected the whole file when there is no frontmatter"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "3. Counting and reporting across both files"
+# ---------------------------------------------------------------------------
+cd "$TEST_DIR"
+cat > t3.md <<'EOF'
+---
+description: "x"
+---
+
+## Tasks
+- [x] one
+- [ ] two
+
+## Review
+- [ ] ticket-side review
+EOF
+cat > n3.md <<'EOF'
+## Implementation log
+- [x] three
+- [-] four - skip: not applicable
+- [ ] five
+
+## Review
+- [ ] note-side review
+EOF
+
+REPORT=$(checklist_report t3.md n3.md)
+
+if echo "$REPORT" | grep -q "Checklist: 3 / 7"; then
+    pass "the total spans both files, counting skipped as done"
+else
+    fail "expected 'Checklist: 3 / 7'" "$REPORT"
+fi
+
+if echo "$REPORT" | grep -q "^  ticket.md$" && echo "$REPORT" | grep -q "^  note.md$"; then
+    pass "the report is split by file"
+else
+    fail "expected a per-file split" "$REPORT"
+fi
+
+if [[ "$(echo "$REPORT" | grep -c "Review")" -eq 2 ]]; then
+    pass "the same heading in both files stays two groups"
+else
+    fail "expected Review to appear once per file" "$REPORT"
 fi
 
 if echo "$REPORT" | grep -q "Implementation log.*2 / 3"; then
@@ -275,63 +382,83 @@ else
     fail "expected a per-group count" "$REPORT"
 fi
 
-if echo "$REPORT" | grep -q -- "- three" && echo "$REPORT" | grep -q -- "- four"; then
+if echo "$REPORT" | grep -q -- "- two" && echo "$REPORT" | grep -q -- "- five"; then
     pass "the report names every unchecked item"
 else
     fail "expected the unchecked items to be listed" "$REPORT"
 fi
 
-note_checklist_report n2.md >/dev/null
+checklist_report t3.md n3.md >/dev/null
 if [[ $? -eq 0 ]]; then
     pass "the report never fails, however much is unchecked"
 else
     fail "the report must not fail"
 fi
 
-cat > n3.md <<'EOF'
+# --require spans both files by heading name alone.
+OUT=$(checklist_require t3.md n3.md "Review" 2>&1)
+RC=$?
+if [[ $RC -eq 1 ]] && echo "$OUT" | grep -q "Review: 0 / 2"; then
+    pass "--require matches the same heading in both files"
+else
+    fail "expected Review to be judged across both files" "$OUT"
+fi
+if echo "$OUT" | grep -q "ticket-side review" && echo "$OUT" | grep -q "note-side review"; then
+    pass "--require lists the unchecked items from both files"
+else
+    fail "expected items from both files" "$OUT"
+fi
+
+cat > empty.md <<'EOF'
 # Notes
 
 Nothing to check here.
 EOF
-if [[ -z "$(note_checklist_report n3.md)" ]]; then
-    pass "a note with no checkboxes reports nothing at all"
+if [[ -z "$(checklist_report empty.md empty.md)" ]]; then
+    pass "files with no checkboxes report nothing at all"
 else
-    fail "expected no output for a note without checkboxes"
+    fail "expected no output without checkboxes"
 fi
 
-if note_checklist_gate n3.md >/dev/null 2>&1; then
-    pass "a note with no checkboxes passes the gate"
+if checklist_gate empty.md empty.md >/dev/null 2>&1; then
+    pass "files with no checkboxes pass the gate"
 else
-    fail "a note without checkboxes must not block close"
+    fail "no checkboxes must not block close"
 fi
 
-if note_checklist_gate "${TEST_DIR}/does-not-exist.md" >/dev/null 2>&1; then
-    pass "a missing note file passes the gate"
+if checklist_gate "${TEST_DIR}/nope-a.md" "${TEST_DIR}/nope-b.md" >/dev/null 2>&1; then
+    pass "missing files pass the gate"
 else
-    fail "a ticket with no note file must not block close"
+    fail "a ticket with neither file must not block close"
 fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "3. check reports, and never fails on its own"
+echo "4. check reports, and never fails on its own"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo3)
-set_note_template "$REPO" false
+REPO=$(make_repo repo4)
+set_templates "$REPO" false
 TICKET=$(begin_ticket "$REPO" demo)
 
 OUT=$(timeout 10 ./ticket.sh check 2>&1)
 RC=$?
 
 if [[ $RC -eq 0 ]]; then
-    pass "check exits 0 with the whole checklist still empty"
+    pass "check exits 0 with every checklist still empty"
 else
     fail "check must not fail on an unfinished checklist" "$OUT"
 fi
 
-if echo "$OUT" | grep -q "Checklist: 0 / 3"; then
-    pass "check reports the checklist of the active ticket's note"
+if echo "$OUT" | grep -q "Checklist: 0 / 5"; then
+    pass "check counts both the ticket body and the note"
 else
-    fail "expected the checklist report in check's output" "$OUT"
+    fail "expected both files in the count" "$OUT"
+fi
+
+if echo "$OUT" | grep -q "write the thing" && echo "$OUT" | grep -q "findings resolved"; then
+    pass "check lists unchecked items from both files"
+else
+    fail "expected items from both files" "$OUT"
 fi
 
 if echo "$OUT" | grep -q "Current ticket is active"; then
@@ -342,7 +469,7 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "4. check --require judges one group"
+echo "5. check --require judges one group"
 # ---------------------------------------------------------------------------
 OUT=$(timeout 10 ./ticket.sh check --require "Implementation log" 2>&1)
 RC=$?
@@ -359,7 +486,7 @@ else
     fail "expected the unchecked items to be listed" "$OUT"
 fi
 
-if echo "$OUT" | grep -q "Review"; then
+if echo "$OUT" | grep -q "write the thing"; then
     fail "check --require reported a group it was not asked about" "$OUT"
 else
     pass "check --require ignores the groups it was not asked about"
@@ -383,6 +510,14 @@ else
     fail "expected the skipped count" "$OUT"
 fi
 
+# "Review" exists in both templates: the ticket's and the note's.
+OUT=$(timeout 10 ./ticket.sh check --require "Review" 2>&1)
+if [[ $? -eq 1 ]] && echo "$OUT" | grep -q "Review: 0 / 2"; then
+    pass "check --require spans a heading present in both files"
+else
+    fail "expected Review to be judged across both files" "$OUT"
+fi
+
 OUT=$(timeout 10 ./ticket.sh check --require "Implementaion log" 2>&1)
 RC=$?
 
@@ -392,8 +527,8 @@ else
     fail "a typo in --require must not become a check that always passes" "$OUT"
 fi
 
-if echo "$OUT" | grep -q "Implementation log" && echo "$OUT" | grep -q "Review"; then
-    pass "the failure lists the group names that do exist"
+if echo "$OUT" | grep -q "Implementation log" && echo "$OUT" | grep -q "Tasks"; then
+    pass "the failure lists the group names that do exist, per file"
 else
     fail "expected the available groups to be listed" "$OUT"
 fi
@@ -414,15 +549,13 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "5. check --require with no active ticket"
+echo "6. check --require with no active ticket"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo5)
+REPO=$(make_repo repo6)
 cd "$REPO"
 
 OUT=$(timeout 10 ./ticket.sh check --require "Anything" 2>&1)
-RC=$?
-
-if [[ $RC -eq 1 ]]; then
+if [[ $? -eq 1 ]]; then
     pass "check --require fails when no ticket is active"
 else
     fail "--require has nothing to judge without a ticket" "$OUT"
@@ -437,25 +570,31 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "6. close refuses while items are unchecked"
+echo "7. close refuses while items are unchecked"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo6)
-set_note_template "$REPO" true
+REPO=$(make_repo repo7)
+set_templates "$REPO" true
 TICKET=$(begin_ticket "$REPO" gated)
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
 RC=$?
 
 if [[ $RC -eq 1 ]]; then
-    pass "close fails while the note has unchecked items"
+    pass "close fails while anything is unchecked"
 else
     fail "expected close to refuse" "$OUT"
 fi
 
-if echo "$OUT" | grep -q "3 unchecked items remain in the note"; then
-    pass "close says how many items are unchecked"
+if echo "$OUT" | grep -q "5 unchecked items remain"; then
+    pass "close counts both files"
 else
-    fail "expected the unchecked count" "$OUT"
+    fail "expected the unchecked count across both files" "$OUT"
+fi
+
+if echo "$OUT" | grep -q "^  ticket.md$" && echo "$OUT" | grep -q "^  note.md$"; then
+    pass "close names which file each group lives in"
+else
+    fail "expected a per-file split in close's output" "$OUT"
 fi
 
 if echo "$OUT" | grep -q "Nothing was closed."; then
@@ -496,12 +635,23 @@ else
     fail "--dry-run should surface this before the real close" "$OUT"
 fi
 
-# ---------------------------------------------------------------------------
-echo
-echo "7. close proceeds once the checklist is settled"
-# ---------------------------------------------------------------------------
+# Settling the note alone is not enough: the ticket body still blocks.
 mark_item "tickets/${TICKET}/note.md" "full test suite passed" x
 mark_item "tickets/${TICKET}/note.md" "live API call verified" - " - skip: no external API here"
+mark_item "tickets/${TICKET}/note.md" "findings resolved" x
+
+OUT=$(timeout 20 ./ticket.sh close 2>&1)
+if [[ $? -eq 1 ]] && echo "$OUT" | grep -q "write the thing"; then
+    pass "a settled note is not enough while the ticket body has items"
+else
+    fail "the ticket body must block on its own" "$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "8. close proceeds once both files are settled"
+# ---------------------------------------------------------------------------
+mark_item "tickets/${TICKET}/ticket.md" "write the thing" x
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
 if [[ $? -eq 1 ]] && echo "$OUT" | grep -q "1 unchecked item remains"; then
@@ -510,12 +660,10 @@ else
     fail "expected the singular form and a refusal" "$OUT"
 fi
 
-mark_item "tickets/${TICKET}/note.md" "findings resolved" x
+mark_item "tickets/${TICKET}/ticket.md" "ticket-side review" x
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
-RC=$?
-
-if [[ $RC -eq 0 ]]; then
+if [[ $? -eq 0 ]]; then
     pass "close succeeds once every item is checked or skipped"
 else
     fail "expected the close to go through" "$OUT"
@@ -529,52 +677,102 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "8. The gate is off unless the config turns it on"
+echo "9. The stock templates, and the gate being off by default"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo8)
-set_note_template "$REPO" false
-TICKET=$(begin_ticket "$REPO" ungated)
-
-OUT=$(timeout 20 ./ticket.sh close 2>&1)
-RC=$?
-
-if [[ $RC -eq 0 ]]; then
-    pass "with require_note_checklist false, close ignores the checklist"
-else
-    fail "the gate must be opt-in" "$OUT"
-fi
-
-REPO=$(make_repo repo8b)
+REPO=$(make_repo repo9)
 cd "$REPO"
-if grep -q "^require_note_checklist: false" .ticket-config.yaml; then
-    pass "init writes require_note_checklist: false into the config"
+if grep -q "^require_checklist: false" .ticket-config.yaml; then
+    pass "init writes require_checklist: false into the config"
 else
     fail "expected the new key in a freshly generated config"
 fi
 
+if grep -q "^require_note_checklist:" .ticket-config.yaml; then
+    fail "the old key name is still being generated"
+else
+    pass "the old key name is gone from generated configs"
+fi
+
 TICKET=$(begin_ticket "$REPO" stock)
 OUT=$(timeout 10 ./ticket.sh check 2>&1)
-if echo "$OUT" | grep -q "Checklist:"; then
-    fail "the stock note template has no checkboxes to report" "$OUT"
+
+if echo "$OUT" | grep -q "Get developer approval before closing"; then
+    pass "the stock ticket template's Tasks list is reported"
 else
-    pass "the stock note template produces no checklist output"
+    fail "expected the stock Tasks list in check's output" "$OUT"
+fi
+
+if echo "$OUT" | grep -q "Update README"; then
+    pass "items nested two columns under another are counted"
+else
+    fail "expected the nested doc items" "$OUT"
+fi
+
+OUT=$(timeout 20 ./ticket.sh close 2>&1)
+if [[ $? -eq 0 ]]; then
+    pass "with require_checklist false, close ignores the checklist"
+else
+    fail "the gate must be opt-in" "$OUT"
 fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "9. Legacy flat layout"
+echo "10. The renamed config key"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo9)
+REPO=$(make_repo repo10)
+set_templates "$REPO" false
+sed_i 's/^require_checklist: false/require_note_checklist: true/' .ticket-config.yaml
+git add -A && git commit -q -m "Old key name, enabled"
+TICKET=$(begin_ticket "$REPO" oldkey)
+
+OUT=$(timeout 20 ./ticket.sh close 2>&1)
+RC=$?
+
+if [[ $RC -eq 1 ]] && echo "$OUT" | grep -q "has been renamed"; then
+    pass "an enabled old key is an error, not a silent no-op"
+else
+    fail "close must not silently ignore require_note_checklist: true" "$OUT"
+fi
+
+if git show "main:tickets/${TICKET}/ticket.md" >/dev/null 2>&1; then
+    pass "nothing was closed while the old key was in place"
+else
+    fail "the ticket should not have moved"
+fi
+
+sed_i 's/^require_note_checklist: true/require_note_checklist: false/' .ticket-config.yaml
+git add -A && git commit -q -m "Old key name, disabled"
+
+OUT=$(timeout 10 ./ticket.sh check 2>&1)
+RC=$?
+if [[ $RC -eq 0 ]] && echo "$OUT" | grep -q "no longer read"; then
+    pass "a disabled old key only warns"
+else
+    fail "expected a warning, not a failure" "$OUT"
+fi
+
+OUT=$(timeout 20 ./ticket.sh close 2>&1)
+if [[ $? -eq 0 ]]; then
+    pass "a disabled old key does not block close"
+else
+    fail "a stale disabled key must not stop anything" "$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "11. Legacy flat layout"
+# ---------------------------------------------------------------------------
+REPO=$(make_repo repo11)
 cd "$REPO"
-sed_i 's/^require_note_checklist: false/require_note_checklist: true/' .ticket-config.yaml
+sed_i 's/^require_checklist: false/require_checklist: true/' .ticket-config.yaml
 git add -A && git commit -q -m "Turn the gate on"
 
-LEGACY="260826-000000-legacy-checklist"
+LEGACY="260827-000000-legacy-checklist"
 cat > "tickets/${LEGACY}.md" <<'EOF'
 ---
 priority: 2
 description: "legacy flat layout"
-created_at: "2026-08-26T00:00:00Z"
+created_at: "2026-08-27T00:00:00Z"
 started_at: null  # Do not modify manually
 closed_at: null   # Do not modify manually
 canceled_at: null # Do not modify manually
@@ -582,14 +780,16 @@ canceled_at: null # Do not modify manually
 
 # Legacy Overview
 
-legacy body text
+## Tasks
+
+- [ ] legacy ticket item
 EOF
 cat > "tickets/${LEGACY}-note.md" <<'EOF'
 # Notes
 
 ## Review
 
-- [ ] legacy item never checked
+- [ ] legacy note item
 EOF
 git add tickets && git commit -q -m "Add legacy ticket"
 
@@ -598,50 +798,50 @@ echo "work" >> README.md
 git add README.md && git commit -q -m "Do the work"
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
-if [[ $? -eq 1 ]] && echo "$OUT" | grep -q "legacy item never checked"; then
-    pass "the flat <name>-note.md is found and judged"
+if [[ $? -eq 1 ]] && echo "$OUT" | grep -q "legacy ticket item" && echo "$OUT" | grep -q "legacy note item"; then
+    pass "both legacy flat files are found and judged"
 else
-    fail "expected the legacy note to be checked too" "$OUT"
+    fail "expected both legacy files to be checked" "$OUT"
 fi
 
 OUT=$(timeout 10 ./ticket.sh check 2>&1)
-if echo "$OUT" | grep -q "legacy item never checked"; then
-    pass "check reports a legacy ticket's checklist"
+if echo "$OUT" | grep -q "legacy note item"; then
+    pass "check reports a legacy ticket's checklists"
 else
     fail "expected the legacy checklist in check's output" "$OUT"
 fi
 
-mark_item "tickets/${LEGACY}-note.md" "legacy item never checked" x
+mark_item "tickets/${LEGACY}.md" "legacy ticket item" x
+mark_item "tickets/${LEGACY}-note.md" "legacy note item" x
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
 if [[ $? -eq 0 ]]; then
-    pass "a legacy ticket closes once its note is settled"
+    pass "a legacy ticket closes once both files are settled"
 else
     fail "expected the legacy close to go through" "$OUT"
 fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "10. A ticket with no note file at all"
+echo "12. A ticket with no note file at all"
 # ---------------------------------------------------------------------------
-REPO=$(make_repo repo10)
-cd "$REPO"
-sed_i 's/^require_note_checklist: false/require_note_checklist: true/' .ticket-config.yaml
-git add -A && git commit -q -m "Turn the gate on"
+REPO=$(make_repo repo12)
+set_templates "$REPO" true
 TICKET=$(begin_ticket "$REPO" nonote)
 rm -f "tickets/${TICKET}/note.md"
-git add -A && git commit -q -m "Drop the note"
+mark_item "tickets/${TICKET}/ticket.md" "write the thing" x
+mark_item "tickets/${TICKET}/ticket.md" "ticket-side review" x
 
 OUT=$(timeout 20 ./ticket.sh close 2>&1)
 if [[ $? -eq 0 ]]; then
-    pass "a ticket with no note file closes with the gate on"
+    pass "a ticket with no note file closes on its ticket body alone"
 else
-    fail "no note means nothing to judge" "$OUT"
+    fail "a missing note means nothing to judge there" "$OUT"
 fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "=== note checklist Test Results ==="
+echo "=== checklist Test Results ==="
 echo "  Passed: $PASSED, Failed: $FAILED"
 echo
 

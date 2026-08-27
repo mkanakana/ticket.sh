@@ -245,10 +245,10 @@ auto_push: true          # close で push する
 # スキップする（--no-verify）。既定では hook を実行する。
 no_verify: false
 
-# note のチェックリストに未記入が残っている間は close を止める。
-# 既定は false。既存の note には未記入が大量に残っているので、既定で有効に
-# すると全員が突然 close できなくなる。
-require_note_checklist: false
+# ticket の Tasks か note のチェックリストに未記入が残っている間は close を止める。
+# 既定は false。既存の ticket / note には未記入が大量に残っているので、既定で
+# 有効にすると全員が突然 close できなくなる。
+require_checklist: false
 
 # Worktreeモード（オプション）
 # worktree_mode: false    # trueの場合、startは常にworktreeを作成
@@ -285,7 +285,7 @@ branch_prefix: "feature/"
 repository: "origin"
 auto_push: true
 no_verify: false
-require_note_checklist: false
+require_checklist: false
 default_content: |
   # Ticket Overview
   
@@ -309,7 +309,7 @@ default_content: |
 ./ticket.sh list [--status todo|doing|done] [--count N]  # チケット一覧
 ./ticket.sh start [--worktree] [--copy-file <path>]... <ticket-name>  # チケット開始・ブランチ作成（--worktreeで別ディレクトリ、--copy-fileでworktree_copy_filesエントリ追加）
 ./ticket.sh restore                       # current-ticketリンク復元
-./ticket.sh check [--require "<group name>"]  # 同期状態 + note のチェックリスト（--require は1グループだけ判定）
+./ticket.sh check [--require "<group name>"]  # 同期状態 + ticket/note のチェックリスト（--require は1グループだけ判定）
 ./ticket.sh close [--no-push] [--force|-f]  # チケット完了・マージ処理
 ./ticket.sh cancel [--force|-f]           # マージせずにチケットをキャンセル
 ```
@@ -667,14 +667,27 @@ Permission denied creating symlink. Please:
 
 ### `check [--require "<group name>"]`
 チケットとブランチの同期状態を報告し、現在のブランチに対応する開始済みチケットが
-あれば current-ticket リンクを復元する。あわせて note のチェックリストの状態を報告する。
+あれば current-ticket リンクを復元する。あわせて ticket が持つ2つのファイルの
+チェックリストの状態を報告する。
 
-**note のチェックリスト**
+**チェックリスト**
 
-ticket.sh が配った note テンプレートにチェックボックスを置くことはできたが、
-それが埋まったかを誰も見ていなかった。雛形を配っているのは ticket.sh なので、
-埋まったかを見られるのは ticket.sh だけである。
+ticket が持つ2つのファイルはどちらもチェックボックスを持ちうるが、それが埋まったかを
+誰も見ていなかった。
 
+| ファイル | チェックリスト |
+|---|---|
+| `ticket.md` | `## Tasks` のリスト。既定のテンプレートに最初から入っている |
+| `note.md` | プロジェクトが note テンプレートに置いたもの |
+
+両方の雛形を配っているのは ticket.sh なので、埋まったかを見られるのは ticket.sh だけ
+である。
+
+- **2つのファイルを両方読み、分けて扱う**。レポートはファイルごとに分かれ、同じ見出しが
+  両方にあっても別グループのままになる。どちらのファイルを直せばよいかが出力から分かる。
+- **ticket の YAML frontmatter は飛ばす**。飛ばさないと、複数行の `description` の中の
+  `- [ ]` を拾ってしまう。note は frontmatter を持たないのでそのまま読む。stripper を
+  通すと、1行目の水平線を frontmatter の開始と誤認する危険がある。
 - **グループ**。チェックボックスは、その行より前にある最も近い heading（レベル不問）
   に属する。グループ名は heading の文字列そのものなので、ticket.sh はグループの
   意味を知らなくてよい。最初の heading より前にあるものは `(ungrouped)` に入る。
@@ -701,7 +714,9 @@ ticket.sh が配った note テンプレートにチェックボックスを置�
 **オプション:**
 - `--require "<group name>"`: そのグループだけを判定し、未記入があれば exit 1。
   「いまどの段階か」を知っているのは呼ぶ側なので、ticket.sh は文字列を照合するだけで
-  よく、段階の概念を持たない。
+  よく、段階の概念を持たない。照合は heading の文字列だけで行い、ファイル名は指定
+  できない。**どちらのファイルにあっても**判定され、両方にあれば合わせて判定する。
+  呼ぶ側が指すのは段階であって、作者がどちらのファイルに置いたかではない。
 
 **終了ステータス:**
 - 素の `check` は、チェックリストが埋まっていなくても失敗しない。作業の途中では
@@ -713,9 +728,22 @@ ticket.sh が配った note テンプレートにチェックボックスを置�
   いるつもりで何も検査していない状態になる。
 - `check --require` は、アクティブなチケットが無ければ exit 1（判定する note が無い）。
 
-note ファイルが無いチケット、およびチェックボックスが1つも無い note は、
-チェックリストの出力を出さず、失敗もしない。note テンプレートにチェックボックスを
-置いていないプロジェクトの挙動は変わらない。
+存在しないファイルは何も寄与しない。両方のファイルにチェックボックスが1つも無ければ、
+チェックリストの出力は出ず、失敗もしない。
+
+**出力例**
+
+```
+Checklist: 6 / 16
+  ticket.md
+    Tasks                 2 / 9
+        - Task 1
+        - Run tests before closing
+  note.md
+    Implementation log    4 / 4  done (1 skipped)
+    Review                0 / 1
+        - findings resolved
+```
 
 **`check` が意図的にやらないこと**
 
@@ -733,11 +761,16 @@ note ファイルが無いチケット、およびチェックボックスが1�
 - `--no-push`: 自動プッシュを無効化（`auto_push: true` の場合でも）
 - `--force` / `-f`: コミットされていない変更を無視して強制的にクローズ
 
-**note チェックリストの preflight:**
+**チェックリストの preflight:**
 
-config で `require_note_checklist: true` にすると、note に未記入が残っている間は
-close を止め、グループごとに未記入項目を並べ、何も変更しない。既定は無効。
+config で `require_checklist: true` にすると、ticket か note に未記入が残っている間は
+close を止め、ファイルとグループごとに未記入項目を並べ、何も変更しない。既定は無効。
 チェックリストの読み方は上の `check` を参照。
+
+このキーは、検査対象が note だけだった頃は `require_note_checklist` という名前だった。
+旧名は削除済み。ただし**黙って無視はしない**。旧名に `true` が残っている config は
+エラーで止める。有効にしていた gate を無言で外すのは、このチェックが潰そうとしている
+失敗そのものだから。`false` の場合は警告のみ。
 
 `--force` では**迂回できない**。`--force` は Git の状態（ticket file が base branch
 側でも動いていた、など）の話であり、このチェックの迂回路は `- [-] ... - skip: <理由>`

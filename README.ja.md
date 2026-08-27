@@ -143,10 +143,10 @@ tickets/
 
 ### 基本ワークフロー
 ```bash
-# 現在の状態と note のチェックリストを確認
+# 現在の状態と ticket / note のチェックリストを確認
 ./ticket.sh check
 
-# note の特定グループだけ判定する（未記入があれば exit 1）
+# 見出し名で特定グループだけ判定する（どちらのファイルでも可、未記入があれば exit 1）
 ./ticket.sh check --require "Implementation log"
 
 # ステータス別チケット一覧
@@ -222,11 +222,12 @@ no_verify: false
 # Set to false if you want to keep remote branches for history
 delete_remote_on_close: true
 
-# note のチェックリストに未記入が残っている間は close を止める。
-# チェックボックスは直近の heading ごとにグループ化される。'- [x]' は済み、
-# '- [ ]' は未記入、'- [-] ... - skip: <理由>' はこの ticket には該当しない項目。
-# 既定は false（既存の note には未記入が大量に残っているため）。
-require_note_checklist: false
+# ticket の Tasks か note のチェックリストに未記入が残っている間は close を止める。
+# 2つのファイルを両方読み、分けて報告する。チェックボックスは直近の heading ごとに
+# グループ化される。'- [x]' は済み、'- [ ]' は未記入、
+# '- [-] ... - skip: <理由>' はこの ticket には該当しない項目。
+# 既定は false（既存の ticket / note には未記入が大量に残っているため）。
+require_checklist: false
 
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)

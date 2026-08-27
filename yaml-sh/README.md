@@ -1,9 +1,3 @@
-**IMPORTANT**: When updating this file, also update README.md files in other languages
-
-- [English ver.](README.md)
-- [Japanese ver.](README.ja.md)
-
----
 # yaml-sh
 
 A simple, portable YAML parser for Bash 3.2+ that provides basic YAML parsing capabilities without external dependencies.
@@ -21,12 +15,11 @@ A simple, portable YAML parser for Bash 3.2+ that provides basic YAML parsing ca
 ## Installation
 
 ```bash
-# Download the script
-curl -O https://raw.githubusercontent.com/yourusername/yaml-sh/main/yaml-sh
-chmod +x yaml-sh
+# Download the library
+curl -O https://raw.githubusercontent.com/masuidrive/ticket.sh/main/yaml-sh/yaml-sh.sh
 
-# Or source it in your script
-source yaml-sh
+# Then source it in your script (it is a library, not an executable)
+source yaml-sh.sh
 ```
 
 ## Usage
@@ -35,7 +28,7 @@ source yaml-sh
 
 ```bash
 #!/usr/bin/env bash
-source yaml-sh
+source yaml-sh.sh
 
 # Parse a YAML file
 yaml_parse "config.yml"
@@ -172,7 +165,7 @@ key: value  # Inline comment
 
 ```bash
 #!/usr/bin/env bash
-source yaml-sh
+source yaml-sh.sh
 
 # Parse application config
 yaml_parse "app.yml"
@@ -194,7 +187,7 @@ fi
 
 ```bash
 #!/usr/bin/env bash
-source yaml-sh
+source yaml-sh.sh
 
 # Parse docker-compose.yml
 yaml_parse "docker-compose.yml"
@@ -204,13 +197,14 @@ echo "Services:"
 yaml_keys | grep -E "^services\." | cut -d. -f2 | sort | uniq
 ```
 
-## ticket-sh: A Practical Application
+## ticket.sh: A Practical Application
 
-This repository includes `ticket-sh`, a Git-based ticket management system that demonstrates yaml-sh in action:
+yaml-sh lives inside [ticket.sh](../README.md), a Git-based ticket management
+system that inlines this parser into a single deployable script:
 
 ```bash
-cd ticket-sh
-bash ./build.sh  # Creates a single deployable script
+cd ..
+bash ./build.sh  # Inlines yaml-sh.sh and the rest into ./ticket.sh
 ./ticket.sh init
 ./ticket.sh new implement-feature
 ./ticket.sh start 241229-123456-implement-feature
@@ -218,18 +212,19 @@ bash ./build.sh  # Creates a single deployable script
 ./ticket.sh close
 ```
 
-See [ticket-sh/README.md](ticket-sh/README.md) for more details.
+See [../README.md](../README.md) for more details.
 
 ## Testing
 
 ```bash
-# Run yaml-sh tests
-./test.sh
+# yaml-sh's own tests. test.sh sources ./yaml-sh.sh, so run it from this
+# directory, not from the repository root.
+cd yaml-sh
+bash test.sh
 
-# Run ticket-sh tests
-cd ticket-sh
-./test-final.sh
-./test-additional.sh
+# ticket.sh's tests, from the repository root
+bash test/run-all.sh
+bash test/run-all-on-docker.sh
 ```
 
 ## Contributing

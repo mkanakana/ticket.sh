@@ -105,12 +105,12 @@ if [[ -f "${SCRIPT_DIR}/yaml-sh/yaml-sh.sh" ]]; then
     source "${SCRIPT_DIR}/yaml-sh/yaml-sh.sh"
     source "${SCRIPT_DIR}/lib/yaml-frontmatter.sh"
     source "${SCRIPT_DIR}/lib/utils.sh"
-    source "${SCRIPT_DIR}/lib/note-checklist.sh"
+    source "${SCRIPT_DIR}/lib/checklist.sh"
 elif [[ -f "${SCRIPT_DIR}/../yaml-sh/yaml-sh.sh" ]]; then
     source "${SCRIPT_DIR}/../yaml-sh/yaml-sh.sh"
     source "${SCRIPT_DIR}/../lib/yaml-frontmatter.sh"
     source "${SCRIPT_DIR}/../lib/utils.sh"
-    source "${SCRIPT_DIR}/../lib/note-checklist.sh"
+    source "${SCRIPT_DIR}/../lib/checklist.sh"
 else
     echo "Error: Cannot find required yaml-sh.sh library" >&2
     echo "Make sure yaml-sh and lib directories are in the correct location" >&2
@@ -138,7 +138,7 @@ DEFAULT_CLOSE_SUCCESS_MESSAGE=""
 DEFAULT_WORKTREE_MODE="false"
 DEFAULT_WORKTREE_DIR=""  # Empty means auto: ../<project-name>.worktrees
 DEFAULT_NO_VERIFY="false"  # Run Git hooks on commits ticket.sh makes itself
-DEFAULT_REQUIRE_NOTE_CHECKLIST="false"  # close does not judge the note's checklist
+DEFAULT_REQUIRE_CHECKLIST="false"  # close does not judge the ticket/note checklists
 DEFAULT_CONTENT='# Ticket Overview
 
 Write the overview and tasks for this ticket here.
@@ -223,13 +223,13 @@ be recognized by every command; they are never auto-migrated.
   - \`--copy-file <path>\` (repeatable) copies the given file from the main repo into the new worktree, appended to the \`worktree_copy_files\` config list. Only applied when a worktree is created. Existing files in the target are never overwritten; missing sources warn and continue. Typical use: bringing gitignored \`.env\` into the worktree.
 - \`$SCRIPT_COMMAND restore\` - Restore current-ticket.md symlink from branch name
 - \`$SCRIPT_COMMAND check [--require "<group name>"]\` - Check current directory and ticket/branch synchronization status
-  - Also reports the note's checklist: every checkbox, grouped by the nearest preceding heading above it. \`- [x]\` is done, \`- [ ]\` is unchecked, and \`- [-] ... - skip: <reason>\` marks an item that does not apply to this ticket (a \`[-]\` with no reason counts as unchecked). Checkboxes inside code blocks are ignored; ones merely nested under another item are not.
+  - Also reports the checklists in **both** the ticket body (its \`## Tasks\` list) and the note, listed per file. Every checkbox is grouped by the nearest preceding heading above it. \`- [x]\` is done, \`- [ ]\` is unchecked, and \`- [-] ... - skip: <reason>\` marks an item that does not apply to this ticket (a \`[-]\` with no reason counts as unchecked). Checkboxes inside code blocks are ignored; ones merely nested under another item are not. The ticket's YAML frontmatter is skipped, so a \`- [ ]\` inside a multi-line \`description\` is not counted.
   - Plain \`check\` never fails on an unfinished checklist - mid-ticket, the later groups being empty is the normal state.
-  - \`--require "<group name>"\` judges that one group and exits 1 if anything in it is unchecked. Use it when the caller knows which stage the work is at; ticket.sh has no notion of stages. A name that matches no group is an error, not a pass, so a typo cannot become a check that always succeeds.
+  - \`--require "<group name>"\` judges that one group and exits 1 if anything in it is unchecked. The name matches heading text in either file, so callers name the stage, not the file. Use it when the caller knows which stage the work is at; ticket.sh has no notion of stages. A name that matches no group is an error, not a pass, so a typo cannot become a check that always succeeds.
 - \`$SCRIPT_COMMAND close [--no-push] [--force|-f] [--no-delete-remote] [--keep-worktree] [--dry-run|-n]\` - Complete current ticket (squash merge to default branch)
   - \`--dry-run\` (\`-n\`) runs all preflight checks (clean working dir, branch, ticket state, base_branch existence, worktree main repo state) and exits before any commit/merge. Useful for catching format mistakes or stale state before the real close. Note: pre-commit hooks are NOT executed by --dry-run.
   - The squash commit's subject is \`[<ticket-name>] <description>\` (description folded onto one line), and its body is the ticket's **Markdown body only** - the YAML frontmatter is never included. This is fixed behavior with no config key. Keeping the body in the message is what lets \`git blame\` reach the reasoning without opening \`tickets/done/\`.
-  - With \`require_note_checklist: true\` in config, close refuses while the note has unchecked items, and lists them. Off by default. \`--force\` does not bypass it: the way out is \`- [-] ... - skip: <reason>\`, which leaves the reason in the note. \`--dry-run\` surfaces it too.
+  - With \`require_checklist: true\` in config, close refuses while the ticket body or the note has unchecked items, and lists them per file. Off by default. \`--force\` does not bypass it: the way out is \`- [-] ... - skip: <reason>\`, which leaves the reason in the file. \`--dry-run\` surfaces it too.
   - From a worktree, close refuses to merge if the main repo is on a non-default branch or has uncommitted changes (protects parallel workers).
   - **Coding agents (Claude Code / Codex / etc.) must pass \`--keep-worktree\`**: without it, the worker's worktree is deleted and the agent's shell cwd points to a removed directory → every subsequent Bash tool call fails.
   - \`--no-merge [--closed-at <ISO8601-UTC>] <ticket-name>\` - Skip the squash-merge (assume the ticket's changes are already on the base branch, e.g. after a GitHub PR merge). Only set closed_at, move the ticket/note to done/, commit and push. Requires \`<ticket-name>\`. \`--closed-at\` overrides closed_at with a full ISO8601 UTC value (default: now).
@@ -413,15 +413,16 @@ no_verify: $DEFAULT_NO_VERIFY
 # Set to false if you want to keep remote branches for history
 delete_remote_on_close: $DEFAULT_DELETE_REMOTE_ON_CLOSE
 
-# Refuse to close while the note still has unchecked checklist items.
-# Checkboxes are grouped by the nearest preceding heading. Three states are
-# recognised: '- [x]' done, '- [ ]' unchecked, and '- [-] ... - skip: <reason>'
-# for an item that does not apply to this ticket. Off by default, because
-# existing notes are full of boxes nobody ever filled in and turning this on
-# for them would block every close at once.
+# Refuse to close while the ticket's Tasks list or the note still has unchecked
+# checklist items. Both files are read; checkboxes are grouped by the nearest
+# preceding heading, per file. Three states are recognised: '- [x]' done,
+# '- [ ]' unchecked, and '- [-] ... - skip: <reason>' for an item that does not
+# apply to this ticket. Off by default, because existing tickets and notes are
+# full of boxes nobody ever filled in and turning this on for them would block
+# every close at once.
 # 'check' always reports the state regardless of this setting, and
 # 'check --require "<group>"' judges a single group on demand.
-require_note_checklist: $DEFAULT_REQUIRE_NOTE_CHECKLIST
+require_checklist: $DEFAULT_REQUIRE_CHECKLIST
 
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)
@@ -720,7 +721,7 @@ EOF
     echo "1. Before closing:"
     echo "   - Review the ticket content and description, collect information from \`current-ticket/note.md\` and other notes, and summarize the final work results so anyone reading the ticket can understand what was done"
     echo "   - Check all tasks in the checklist are completed (mark with \`[x]\`)"
-    echo "   - Settle the checklist in \`current-ticket/note.md\` as you go, not at the end: mark each box \`[x]\` when you do the thing, or \`- [-] ... - skip: <reason>\` when it does not apply to this ticket. Run \`$SCRIPT_COMMAND check\` to see what is still open"
+    echo "   - Settle the checkboxes in \`current-ticket/ticket.md\` and \`current-ticket/note.md\` as you go, not at the end: mark each box \`[x]\` when you do the thing, or \`- [-] ... - skip: <reason>\` when it does not apply to this ticket. Run \`$SCRIPT_COMMAND check\` to see what is still open in both files"
     echo "   - Commit all your work: \`git add . && git commit -m \"your message\"\`"
     echo "   - Get user approval before proceeding"
     echo "2. Complete: \`$SCRIPT_COMMAND close\` (moves the whole \`tickets/<TICKETNAME>/\` directory to \`tickets/done/<TICKETNAME>/\` in a single commit that also stamps \`closed_at\`)"
@@ -1184,6 +1185,40 @@ emit_active_ticket_paths() {
     echo ""
 }
 
+# The checklist config key was named require_note_checklist while the check only
+# looked at the note. It now reads the ticket body too, so the key is
+# require_checklist and the old name is gone.
+#
+# Silently ignoring the old name is the one outcome to avoid: a config that says
+# require_note_checklist: true would stop gating without saying so, which is
+# exactly the "it is there and nobody looks at it" failure the check exists to
+# end. So an enabled old key is an error. A disabled one only warns - nothing is
+# being switched off behind the user's back, it is just stale.
+#
+# Assumes the config has already been parsed by yaml_parse.
+check_legacy_checklist_key() {
+    local legacy
+    legacy=$(yaml_get "require_note_checklist" 2>/dev/null || echo "")
+    [[ -z "$legacy" ]] && return 0
+
+    if [[ "$legacy" == "true" ]]; then
+        cat >&2 << EOF
+Error: 'require_note_checklist' has been renamed
+The checklist check now reads the ticket body as well as the note, so the key is
+'require_checklist'. Leaving the old name in place would silently stop gating
+close. Please rename it in $CONFIG_FILE:
+
+  require_checklist: true
+
+EOF
+        return 1
+    fi
+
+    echo "Warning: 'require_note_checklist' in $CONFIG_FILE is no longer read." >&2
+    echo "It is now called 'require_checklist'. Remove or rename the old key." >&2
+    return 0
+}
+
 # List tickets
 cmd_list() {
     local filter_status=""
@@ -1388,7 +1423,7 @@ EOF
         fi
         echo
         
-        ((displayed++))
+        displayed=$((displayed + 1))
     done < "$sorted_file" || true
     
     rm -f "$sorted_file"
@@ -2192,6 +2227,7 @@ cmd_check() {
     local default_branch=$(yaml_get "default_branch" || echo "$DEFAULT_BRANCH")
     local tickets_dir=$(yaml_get "tickets_dir" || echo "$DEFAULT_TICKETS_DIR")
     local branch_prefix=$(yaml_get "branch_prefix" || echo "$DEFAULT_BRANCH_PREFIX")
+    check_legacy_checklist_key || return 1
     
     # Get current branch
     local current_branch=$(get_current_branch)
@@ -2366,21 +2402,22 @@ cmd_check() {
         return 0
     fi
 
-    local note_file
-    note_file=$(get_note_file "$checklist_ticket" "$tickets_dir")
+    local checklist_ticket_file checklist_note_file
+    checklist_ticket_file=$(get_ticket_file "$checklist_ticket" "$tickets_dir")
+    checklist_note_file=$(get_note_file "$checklist_ticket" "$tickets_dir")
 
     if [[ "$require_given" == "true" ]]; then
-        if [[ ! -f "$note_file" ]]; then
+        if [[ ! -f "$checklist_ticket_file" && ! -f "$checklist_note_file" ]]; then
             echo ""
-            echo "✗ No note file to judge: $note_file"
+            echo "✗ Nothing to judge: neither $checklist_ticket_file nor $checklist_note_file exists"
             return 1
         fi
         echo ""
-        note_checklist_require "$note_file" "$require_group" || return 1
+        checklist_require "$checklist_ticket_file" "$checklist_note_file" "$require_group" || return 1
         return 0
     fi
 
-    note_checklist_report "$note_file"
+    checklist_report "$checklist_ticket_file" "$checklist_note_file"
 }
 
 # Finalize a ticket without merging (close --no-merge).
@@ -2668,7 +2705,8 @@ EOF
     local auto_push=$(yaml_get "auto_push" || echo "$DEFAULT_AUTO_PUSH")
     local delete_remote_on_close=$(yaml_get "delete_remote_on_close" || echo "$DEFAULT_DELETE_REMOTE_ON_CLOSE")
     local close_success_message=$(yaml_get "close_success_message" || echo "$DEFAULT_CLOSE_SUCCESS_MESSAGE")
-    local require_note_checklist=$(yaml_get "require_note_checklist" || echo "$DEFAULT_REQUIRE_NOTE_CHECKLIST")
+    local require_checklist=$(yaml_get "require_checklist" || echo "$DEFAULT_REQUIRE_CHECKLIST")
+    check_legacy_checklist_key || return 1
     
     # Check current branch
     local current_branch=$(get_current_branch)
@@ -2784,14 +2822,15 @@ EOF
         fi
     fi
 
-    # Refuse to close while the note still has unchecked checklist items.
+    # Refuse to close while the ticket body or the note still has unchecked
+    # checklist items.
     # Deliberately NOT bypassed by --force: --force is about the state of the
     # Git tree (a ticket file that also moved on the base branch), and the way
     # out of this one is to mark the item `- [-] ... - skip: <reason>`, which
-    # leaves the reason in the note where a reader can weigh it. An escape
+    # leaves the reason in the file where a reader can weigh it. An escape
     # hatch that records nothing would put the checklist right back where it
     # was - present, and never looked at.
-    if [[ "$require_note_checklist" == "true" ]]; then
+    if [[ "$require_checklist" == "true" ]]; then
         local _close_note_file
         if [[ "${ticket_file##*/}" == "ticket.md" ]]; then
             _close_note_file="${ticket_file%/ticket.md}/note.md"
@@ -2799,8 +2838,9 @@ EOF
             _close_note_file="${ticket_file%.md}-note.md"
         fi
         # A ticket with no note file at all (note_content undefined in config)
-        # has nothing to judge, and note_checklist_gate passes on it.
-        if ! note_checklist_gate "$_close_note_file"; then
+        # simply contributes nothing, and checklist_gate passes when neither
+        # file holds a checkbox.
+        if ! checklist_gate "$ticket_file" "$_close_note_file"; then
             echo "Nothing was closed." >&2
             return 1
         fi
@@ -3535,7 +3575,7 @@ automatically.
 1. Before closing:
    - Review the ticket content and description; collect information from `current-ticket/note.md` and summarize the final work so any reader can understand what was done on this branch.
    - Check all checklist tasks are completed (mark with `[x]`).
-   - Settle the checklist in `current-ticket/note.md` as you go, not at the end: mark each box `[x]` when you actually do the thing, or `- [-] ... - skip: <reason>` when it does not apply to this ticket. `./ticket.sh check` reports what is still open, and with `require_note_checklist: true` in config, `close` refuses until nothing is.
+   - Settle the checkboxes in `current-ticket/ticket.md` and `current-ticket/note.md` as you go, not at the end: mark each box `[x]` when you actually do the thing, or `- [-] ... - skip: <reason>` when it does not apply to this ticket. `./ticket.sh check` reports what is still open in both files, and with `require_checklist: true` in config, `close` refuses until nothing is.
    - Commit all your work: `git add . && git commit -m "your message"`.
    - Get user approval before proceeding.
 2. Complete: `./ticket.sh close`
@@ -3738,7 +3778,7 @@ epic_extract_frontmatter() {
     local in_fm=0 line_num=0 out=""
     while IFS= read -r line; do
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_fm=1
             continue
@@ -3757,7 +3797,7 @@ epic_extract_body() {
     local in_fm=0 past=0 line_num=0 out=""
     while IFS= read -r line; do
         line=${line%$'\r'}
-        ((line_num++))
+        line_num=$((line_num + 1))
         if [[ $line_num -eq 1 ]] && [[ "$line" == "---" ]]; then
             in_fm=1
             continue
