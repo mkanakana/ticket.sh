@@ -3,7 +3,7 @@ priority: 2
 base_branch: default  # Override base branch for start/close (default: use default_branch from config)
 description: "チェックリストの検査対象に ticket.md を加え、ファイル別に報告する。config キーを require_checklist に改名"
 created_at: "2026-08-27T01:36:36Z"
-started_at: null  # Do not modify manually
+started_at: 2026-08-27T01:37:03Z # Do not modify manually
 closed_at: null   # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
