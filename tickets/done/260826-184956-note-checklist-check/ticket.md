@@ -4,7 +4,7 @@ base_branch: default  # Override base branch for start/close (default: use defau
 description: "note のチェックリスト未記入を check / close で検出する（グループは直近の heading、3状態、既定 opt-out）"
 created_at: "2026-08-26T18:49:56Z"
 started_at: 2026-08-26T18:50:47Z # Do not modify manually
-closed_at: null   # Do not modify manually
+closed_at: 2026-08-27T01:21:36Z # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
 
@@ -129,23 +129,23 @@ require_note_checklist: false  # 既定。true にすると close の preflight 
 
 ## Tasks
 
-- [ ] note のチェックリストを解析する関数を書く（heading グループ化、3 状態、コードフェンス除外）
-- [ ] コードフェンス除外: ``` / `~~~` / リスト文脈でない 4 スペース字下げ
-- [ ] `(ungrouped)` フォールバック
-- [ ] `require_note_checklist` を config に追加（既定 false、`init` が生成する config にも）
-- [ ] `cmd_check` に報告出力を追加（exit 0 のまま）
-- [ ] `cmd_check --require "<group>"` の引数 parse と判定（グループ不在なら 1）
-- [ ] `cmd_close` の preflight に判定を追加（`--dry-run` でも走る、`--force` で迂回させない）
-- [ ] note ファイルの解決（新レイアウト / レガシー flat / note 無しは no-op pass）
-- [ ] テストを書く（`test/test-note-checklist.sh`）
-- [ ] 旧実装に戻すとテストが落ちることを確認する（negative control）
-- [ ] Run tests before closing and pass all tests (No exceptions)
-- [ ] Run `bash build.sh` to build the project
-- [ ] Update documentation if necessary
-  - [ ] Update README.*.md
-  - [ ] Update spec.*.md
-  - [ ] Update DEV.md
-  - [ ] help text（`check` と `close` の項）
-- [ ] 「テンプレート照合による行削除の検出」を新規 issue として切り出す
-- [ ] issue #3 に 4 スペース字下げの判断を返信する
+- [x] note のチェックリストを解析する関数を書く（heading グループ化、3 状態、コードフェンス除外）
+- [x] コードフェンス除外: ``` / `~~~` / リスト文脈でない 4 スペース字下げ
+- [x] `(ungrouped)` フォールバック
+- [x] `require_note_checklist` を config に追加（既定 false、`init` が生成する config にも）
+- [x] `cmd_check` に報告出力を追加（exit 0 のまま）
+- [x] `cmd_check --require "<group>"` の引数 parse と判定（グループ不在なら 1）
+- [x] `cmd_close` の preflight に判定を追加（`--dry-run` でも走る、`--force` で迂回させない）
+- [x] note ファイルの解決（新レイアウト / レガシー flat / note 無しは no-op pass）
+- [x] テストを書く（`test/test-note-checklist.sh`）
+- [x] 旧実装に戻すとテストが落ちることを確認する（negative control）
+- [x] Run tests before closing and pass all tests (No exceptions)
+- [x] Run `bash build.sh` to build the project
+- [x] Update documentation if necessary
+  - [x] Update README.*.md
+  - [x] Update spec.*.md
+  - [x] Update DEV.md
+  - [x] help text（`check` と `close` の項）
+- [x] 「テンプレート照合による行削除の検出」を新規 issue として切り出す（#4）
+- [x] issue #3 に 4 スペース字下げの判断を返信する
 - [ ] Get developer approval before closing

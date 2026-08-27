@@ -245,6 +245,11 @@ auto_push: true          # close で push する
 # スキップする（--no-verify）。既定では hook を実行する。
 no_verify: false
 
+# note のチェックリストに未記入が残っている間は close を止める。
+# 既定は false。既存の note には未記入が大量に残っているので、既定で有効に
+# すると全員が突然 close できなくなる。
+require_note_checklist: false
+
 # Worktreeモード（オプション）
 # worktree_mode: false    # trueの場合、startは常にworktreeを作成
 # worktree_dir: ""        # カスタムworktreeベースディレクトリ
@@ -280,6 +285,7 @@ branch_prefix: "feature/"
 repository: "origin"
 auto_push: true
 no_verify: false
+require_note_checklist: false
 default_content: |
   # Ticket Overview
   
@@ -303,6 +309,7 @@ default_content: |
 ./ticket.sh list [--status todo|doing|done] [--count N]  # チケット一覧
 ./ticket.sh start [--worktree] [--copy-file <path>]... <ticket-name>  # チケット開始・ブランチ作成（--worktreeで別ディレクトリ、--copy-fileでworktree_copy_filesエントリ追加）
 ./ticket.sh restore                       # current-ticketリンク復元
+./ticket.sh check [--require "<group name>"]  # 同期状態 + note のチェックリスト（--require は1グループだけ判定）
 ./ticket.sh close [--no-push] [--force|-f]  # チケット完了・マージ処理
 ./ticket.sh cancel [--force|-f]           # マージせずにチケットをキャンセル
 ```
@@ -658,12 +665,85 @@ Permission denied creating symlink. Please:
 3. Run with appropriate permissions if needed
 ```
 
+### `check [--require "<group name>"]`
+チケットとブランチの同期状態を報告し、現在のブランチに対応する開始済みチケットが
+あれば current-ticket リンクを復元する。あわせて note のチェックリストの状態を報告する。
+
+**note のチェックリスト**
+
+ticket.sh が配った note テンプレートにチェックボックスを置くことはできたが、
+それが埋まったかを誰も見ていなかった。雛形を配っているのは ticket.sh なので、
+埋まったかを見られるのは ticket.sh だけである。
+
+- **グループ**。チェックボックスは、その行より前にある最も近い heading（レベル不問）
+  に属する。グループ名は heading の文字列そのものなので、ticket.sh はグループの
+  意味を知らなくてよい。最初の heading より前にあるものは `(ungrouped)` に入る。
+- **3 状態**
+
+  | 記法 | 意味 | 判定 |
+  |---|---|---|
+  | `- [x] ...` | 済み | 通す |
+  | `- [ ] ...` | 未記入 | 止める |
+  | `- [-] ... - skip: <理由>` | この ticket には該当しない | 理由があれば通す |
+
+  理由の無い `[-]` は未記入として扱う。理由が無ければ、作業を飛ばしたのと区別が
+  つかないため。`skip:` の直前のダッシュは必須ではなく、大小文字も問わない。
+  この語彙に無いマーカー（`[~]`、`[/]` など）は、意味を推測せず無視する。
+- **skip は分子に数える**。件数は別に出す（`4 / 4  done (1 skipped)`）。
+- **コードブロックの中は数えない**。フェンス（バッククォート／チルダ）と字下げの
+  両方が対象。作業ログである note は、自分が配られたテンプレートをそのまま引用する
+  ことが普通にある。ただし**リストの中の 4 カラム字下げはコードではなくリスト項目の
+  継続**なので、ネストしたチェックボックスは数える。そうしないと、字下げするだけで
+  項目が静かに検査対象から消えてしまう。
+- Setext heading（`===` や `---` の下線）は heading として扱わない。note の水平線と
+  区別がつかないため。
+
+**オプション:**
+- `--require "<group name>"`: そのグループだけを判定し、未記入があれば exit 1。
+  「いまどの段階か」を知っているのは呼ぶ側なので、ticket.sh は文字列を照合するだけで
+  よく、段階の概念を持たない。
+
+**終了ステータス:**
+- 素の `check` は、チェックリストが埋まっていなくても失敗しない。作業の途中では
+  後段のグループが空なのが正常であり、そこで落とすと初日から必ず止まって、結局
+  切られる。
+- `check --require` は、指定グループに未記入があれば exit 1。
+- `check --require` は、**その名前のグループが存在しない場合も exit 1**。通して
+  しまうと、タイポした `--require` が「常に成功する no-op」になり、呼ぶ側は守って
+  いるつもりで何も検査していない状態になる。
+- `check --require` は、アクティブなチケットが無ければ exit 1（判定する note が無い）。
+
+note ファイルが無いチケット、およびチェックボックスが1つも無い note は、
+チェックリストの出力を出さず、失敗もしない。note テンプレートにチェックボックスを
+置いていないプロジェクトの挙動は変わらない。
+
+**`check` が意図的にやらないこと**
+
+呼ぶ側に残してある:
+
+- **どの段階でどのグループを要求するか** — `--require` に文字列で渡す
+- **チェックが古くなったかの判定**（テストは通ったが、その後コードを直した、など）
+  — 何を「関係する変更」と見なすかがプロジェクトごとに違う
+- **チェック項目の意味**
+
 ### `close [--no-push] [--force|-f]`
 チケット完了とマージ処理：
 
 **オプション:**
 - `--no-push`: 自動プッシュを無効化（`auto_push: true` の場合でも）
 - `--force` / `-f`: コミットされていない変更を無視して強制的にクローズ
+
+**note チェックリストの preflight:**
+
+config で `require_note_checklist: true` にすると、note に未記入が残っている間は
+close を止め、グループごとに未記入項目を並べ、何も変更しない。既定は無効。
+チェックリストの読み方は上の `check` を参照。
+
+`--force` では**迂回できない**。`--force` は Git の状態（ticket file が base branch
+側でも動いていた、など）の話であり、このチェックの迂回路は `- [-] ... - skip: <理由>`
+の側にある。そちらは理由が note に残り、読む側が妥当性を判断できる。何も記録せずに
+通す抜け道を付ければ、チェックリストは元の状態 — 置いてあるが誰も見ない — に戻る。
+`--dry-run` でもこのチェックは走る。
 
 **実行フロー:**
 1. **作業ディレクトリチェック**: `--force` 未指定時のみ、コミットされていない変更がないか確認

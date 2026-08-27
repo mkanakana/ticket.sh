@@ -20,7 +20,8 @@ ticket-sh/
 ├── lib/
 │   ├── yaml-sh.sh         # YAML parser library
 │   ├── yaml-frontmatter.sh # YAML frontmatter handler
-│   └── utils.sh           # Utility functions
+│   ├── utils.sh           # Utility functions
+│   └── note-checklist.sh  # Note checklist scanner (check/close)
 ├── test/
 │   ├── test-*.sh          # Feature-specific test files
 │   ├── run-all.sh         # Local test runner
@@ -317,6 +318,27 @@ Documentation updates should be part of the same PR as code changes.
    history, and the same commit already carries the ticket file itself. Build the
    message with `$'\n\n'` and plain `echo`, never `echo -e`: the body is
    arbitrary Markdown and may contain backslash escapes that `-e` would expand.
+9. **The note checklist is scanned, not reconciled against the template**: `check`
+   and `close` read the note itself and group its checkboxes by the nearest
+   preceding heading. They deliberately do NOT compare it against `note_content`
+   in the config to detect deleted lines. The config holds the *current*
+   template, while a ticket started last week was handed an older one, so adding
+   a line to the template would mark every in-flight ticket as having deleted it;
+   and item lines are edited in normal use (evidence appended, a skip reason
+   added), which any text match would then miss. Deleting a line is an act that
+   shows up in `git diff`; leaving a box unchecked is what happens when nobody
+   does anything, and that is the hole worth closing. See issue #3.
+10. **Four columns of indentation inside a list is not a code block**: the
+   scanner excludes fenced and indented code blocks, because a work note quotes
+   the very template it came from. But in CommonMark, indentation inside a list
+   is the item's own continuation - treating it as code would drop nested
+   checkboxes from the count, handing back an "indent it and it stops blocking"
+   loophole in a check whose whole point is that items cannot be made to
+   disappear.
+11. **`--force` does not bypass the checklist**: `--force` is about the state of
+   the Git tree. The way past the checklist is `- [-] ... - skip: <reason>`,
+   which leaves the reason in the note where a reader can weigh it. A flag that
+   recorded nothing would restore the status quo the check exists to end.
 
 ### Recent Enhancements
 
@@ -327,6 +349,7 @@ Documentation updates should be part of the same PR as code changes.
 - **Git history protection**: Prevents accidental commits of working files
 - **Work notes separation**: Optional separate note files for debugging and investigation logs
 - **Worktree support**: Optional git worktree mode for parallel ticket work without branch switching
+- **Note checklist check**: `check` reports the note's checkboxes by heading group, `check --require "<group>"` judges one group, and `require_note_checklist: true` makes `close` refuse while any are unchecked
 
 ## Troubleshooting
 

@@ -247,6 +247,11 @@ auto_push: true          # Push on close
 # start-time stamp. Hooks run by default.
 no_verify: false
 
+# Refuse to close while the note still has unchecked checklist items.
+# Off by default: existing notes are full of boxes nobody ever filled in, and
+# turning this on for them would block every close at once.
+require_note_checklist: false
+
 # Worktree mode (optional)
 # worktree_mode: false    # When true, 'start' always creates a worktree
 # worktree_dir: ""        # Custom worktree base directory
@@ -282,6 +287,7 @@ branch_prefix: "feature/"
 repository: "origin"
 auto_push: true
 no_verify: false
+require_note_checklist: false
 default_content: |
   # Ticket Overview
   
@@ -305,6 +311,7 @@ default_content: |
 ./ticket.sh list [--status todo|doing|done] [--count N]  # List tickets
 ./ticket.sh start [--worktree] [--copy-file <path>]... <ticket-name>  # Start ticket/create branch (--worktree for separate directory; --copy-file appends worktree_copy_files entry)
 ./ticket.sh restore                       # Restore current-ticket link
+./ticket.sh check [--require "<group name>"]  # Sync status + note checklist (--require judges one group)
 ./ticket.sh close [--no-push] [--force|-f]  # Complete ticket/merge process
 ./ticket.sh cancel [--force|-f]           # Cancel ticket without merging
 ```
@@ -663,12 +670,89 @@ Permission denied creating symlink. Please:
 3. Run with appropriate permissions if needed
 ```
 
+### `check [--require "<group name>"]`
+Reports the ticket/branch synchronization status, restoring the active-ticket
+symlink when the current branch has a matching started ticket. It also reports
+the state of the checklist in the ticket's note.
+
+**Note Checklist**
+
+The note template ticket.sh hands out can carry checkboxes, but nothing used to
+look at whether they were filled in. Since ticket.sh is the side that handed the
+template out, it is the only thing that can.
+
+- **Groups.** A checkbox belongs to the nearest heading above it, at any level.
+  The group name is the heading's own text, so ticket.sh never needs to know
+  what a group means. Checkboxes above the first heading fall into `(ungrouped)`.
+- **Three states.**
+
+  | Notation | Meaning | Verdict |
+  |---|---|---|
+  | `- [x] ...` | done | passes |
+  | `- [ ] ...` | unchecked | blocks |
+  | `- [-] ... - skip: <reason>` | does not apply to this ticket | passes if a reason is given |
+
+  A `[-]` without a reason counts as unchecked: without one it is
+  indistinguishable from skipping the work. The dash before `skip:` is not
+  required, and the match is case-insensitive. Markers outside this vocabulary
+  (`[~]`, `[/]`, ...) are ignored rather than guessed at.
+- **Skipped items count as done** in the totals, and the count is reported
+  separately: `4 / 4  done (1 skipped)`.
+- **Code blocks are excluded.** Fenced (backtick and tilde) and indented blocks
+  do not contribute checkboxes - a work note routinely quotes the very template
+  it came from. Four columns of indentation *inside a list* is the item's own
+  continuation, not code, so a checkbox nested under another one still counts.
+  Otherwise indenting an item would silently remove it from the check.
+- Setext headings (underlined with `===` or `---`) are not treated as headings:
+  a note's horizontal rules would be indistinguishable from them.
+
+**Options:**
+- `--require "<group name>"`: judge only that group, and exit 1 if anything in
+  it is unchecked. The caller is the one that knows which stage the work is at;
+  ticket.sh only has to match a string, so it needs no notion of stages.
+
+**Exit status:**
+- Plain `check` never fails on an unfinished checklist. Halfway through a
+  ticket, the later groups being empty is the normal state, and a check that
+  failed on day one would simply be turned off.
+- `check --require` exits 1 when the named group has unchecked items.
+- `check --require` also exits 1 when **no group by that name exists**. Passing
+  instead would turn a typo into a check that always succeeds - the caller would
+  believe it was enforcing something while nothing was being looked at.
+- `check --require` exits 1 when no ticket is active, since there is no note to
+  judge.
+
+A ticket whose note file is absent, or whose note holds no checkboxes at all,
+produces no checklist output and never fails. Projects that put no checkboxes in
+their note template are unaffected.
+
+**What `check` deliberately does not do**
+
+Left to the caller, on purpose:
+
+- **Which group is required at which stage** - passed in as a string via `--require`
+- **Deciding a check has gone stale** (the suite passed, then the code changed) -
+  what counts as a relevant change differs per project
+- **The meaning of any item**
+
 ### `close [--no-push] [--force|-f]`
 Completes ticket and merge process:
 
 **Options:**
 - `--no-push`: Skip automatic push operations even when `auto_push: true`
 - `--force` or `-f`: Bypass uncommitted changes check and force close the ticket
+
+**Note Checklist Preflight:**
+
+With `require_note_checklist: true` in config, close refuses while the note has
+unchecked items, lists them by group, and changes nothing. Off by default. See
+`check` above for how the checklist is read.
+
+`--force` does **not** bypass it. `--force` is about the state of the Git tree
+(a ticket file that also moved on the base branch); the way past this check is
+`- [-] ... - skip: <reason>`, which leaves the reason in the note where a reader
+can weigh it. An escape hatch that recorded nothing would put the checklist back
+where it started: present, and never looked at. `--dry-run` runs the check too.
 
 **Execution Flow:**
 1. **Check working directory**: Ensures no uncommitted changes (unless `--force` is used)

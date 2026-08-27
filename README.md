@@ -143,8 +143,11 @@ They are never auto-migrated to the new layout; convert on your own schedule.
 
 ### Basic Workflow
 ```bash
-# Check current state
+# Check current state, and report the note's checklist
 ./ticket.sh check
+
+# Judge one checklist group in the note (exits 1 if anything in it is unchecked)
+./ticket.sh check --require "Implementation log"
 
 # List tickets by status  
 ./ticket.sh list --status todo
@@ -295,6 +298,13 @@ no_verify: false
 # Automatically delete remote feature branch after closing ticket
 # Set to false if you want to keep remote branches for history
 delete_remote_on_close: true
+
+# Refuse to close while the note still has unchecked checklist items.
+# Checkboxes are grouped by the nearest heading above them; '- [x]' is done,
+# '- [ ]' is unchecked, and '- [-] ... - skip: <reason>' marks an item that does
+# not apply to this ticket. Off by default, because existing notes are full of
+# boxes nobody ever filled in.
+require_note_checklist: false
 
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)

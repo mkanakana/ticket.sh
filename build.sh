@@ -76,6 +76,11 @@ EOF
     echo "# --- utils.sh ---"
     tail -n +2 "$LIB_DIR/utils.sh"
     echo ""
+
+    # Process note-checklist.sh
+    echo "# --- note-checklist.sh ---"
+    tail -n +2 "$LIB_DIR/note-checklist.sh"
+    echo ""
     
     # Process main script (excluding shebang and source statements)
     echo "# === Main Script ==="
