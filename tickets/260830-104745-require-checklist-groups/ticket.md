@@ -3,7 +3,7 @@ priority: 2
 base_branch: default  # Override base branch for start/close (default: use default_branch from config)
 description: "require_checklist_groups: 存在しなければならない見出しを close で強制する (gh #5)"
 created_at: "2026-08-30T10:47:45Z"
-started_at: null  # Do not modify manually
+started_at: 2026-08-30T10:48:31Z # Do not modify manually
 closed_at: null   # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
