@@ -229,6 +229,16 @@ delete_remote_on_close: true
 # 既定は false（既存の ticket / note には未記入が大量に残っているため）。
 require_checklist: false
 
+# 「無ければならない見出し」の一覧。require_checklist は未記入のチェックボックスを
+# 数えるので、節が丸ごとファイルに無いと数える対象がゼロになり、「全部片付いた」と
+# 区別がつかない。ここに見出し名を挙げると、ticket 本文にも note にもその見出しが
+# 無い場合（見出しはあるが下にチェックボックスが1つも無い場合も同じ）に close を
+# 止める。テンプレートより前に作られた ticket、手で書いた ticket、別テンプレートから
+# 移ってきた ticket を捕まえるのがこれ。挙げたグループに未記入が残っている場合も
+# 止める。既定は空で、require_checklist とは独立（この一覧自体が opt-in）。
+# require_checklist_groups:
+#   - "Required Probes"
+
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)
 # worktree_mode: false

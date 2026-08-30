@@ -250,6 +250,13 @@ no_verify: false
 # 有効にすると全員が突然 close できなくなる。
 require_checklist: false
 
+# 「無ければならない見出し」の一覧。require_checklist は未記入を数えるので、節ごと
+# 無いと数える対象がゼロになり「全部片付いた」と区別がつかない。ここに挙げた見出しが
+# どちらのファイルにも無ければ close を止め、その下に未記入が残っている場合も止める。
+# 既定は空。require_checklist とは独立。
+# require_checklist_groups:
+#   - "Required Probes"
+
 # Worktreeモード（オプション）
 # worktree_mode: false    # trueの場合、startは常にworktreeを作成
 # worktree_dir: ""        # カスタムworktreeベースディレクトリ
@@ -286,6 +293,7 @@ repository: "origin"
 auto_push: true
 no_verify: false
 require_checklist: false
+require_checklist_groups: []
 default_content: |
   # Ticket Overview
   
@@ -745,6 +753,15 @@ Checklist: 6 / 16
         - findings resolved
 ```
 
+config に `require_checklist_groups` を書くと、`check` はそのグループの現状も表示する
+（exit code は 0 のまま）:
+
+```
+Required groups
+    Required Probes    missing  (close will refuse)
+    Review             1 / 1  done
+```
+
 **`check` が意図的にやらないこと**
 
 呼ぶ側に残してある:
@@ -766,6 +783,34 @@ Checklist: 6 / 16
 config で `require_checklist: true` にすると、ticket か note に未記入が残っている間は
 close を止め、ファイルとグループごとに未記入項目を並べ、何も変更しない。既定は無効。
 チェックリストの読み方は上の `check` を参照。
+
+**必須グループ**（`require_checklist_groups`）
+
+`require_checklist` は**未記入のチェックボックスを数える**ので、節が丸ごとファイルに
+無いと数える対象がゼロになり、「全部片付いた」と区別がつかない。close は通り、しかも
+**何も検査していないことが出力に一切現れない**。テンプレートより前に作られた ticket、
+手で書いた ticket、別テンプレートから移ってきた ticket は、まさにこの状態にある。
+
+`require_checklist_groups` は「無ければならない見出し」を宣言する:
+
+```yaml
+require_checklist_groups:
+  - "Required Probes"
+```
+
+宣言した名前がどちらのファイルのどのグループにも一致しなければ close を止める。
+**見出しはあるが下にチェックボックスが1つも無い場合も同じ扱い**で、読む側から見れば
+「判定される中身が無い」という点で変わらないため。宣言したグループに未記入が残って
+いる場合も止める。照合の仕方は `check --require` と同じ（heading の文字列だけ、
+どちらのファイルでも可、両方にあれば合わせて判定）。
+
+既定は空で、何も宣言しなければ close の挙動は従来と完全に同一。`require_checklist`
+とは独立で、この一覧自体が opt-in なので、ファイル全体の gate を入れていない
+プロジェクトでも宣言したグループだけは守られる。**欠落は未記入より先に報告する。**
+「節がそもそも無い」の方が基本的な答えであり、先に未記入の一覧を見せられた人は、
+それを埋め終えてから「必要だった節は最初から無かった」と告げられることになるため。
+
+`check` は宣言グループの現状を表示するが、そこで失敗はしない。止めるのは close。
 
 このキーは、検査対象が note だけだった頃は `require_note_checklist` という名前だった。
 旧名は削除済み。ただし**黙って無視はしない**。旧名に `true` が残っている config は

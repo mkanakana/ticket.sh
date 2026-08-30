@@ -4,7 +4,7 @@ base_branch: default  # Override base branch for start/close (default: use defau
 description: "require_checklist_groups: 存在しなければならない見出しを close で強制する (gh #5)"
 created_at: "2026-08-30T10:47:45Z"
 started_at: 2026-08-30T10:48:31Z # Do not modify manually
-closed_at: null   # Do not modify manually
+closed_at: 2026-08-30T14:41:29Z # Do not modify manually
 canceled_at: null # Do not modify manually
 ---
 
@@ -58,29 +58,29 @@ GitHub issue #5 の対応。
 
 ## What / Acceptance Criteria
 
-- [ ] `require_checklist_groups` に宣言した見出しが ticket.md / note.md のどちらにも無ければ `close` が拒否する
-- [ ] 見出しはあるが checkbox が 0 個の場合も同様に拒否する
-- [ ] 宣言グループに未了 checkbox が残っている場合も拒否する（`require_checklist: false` でも）
-- [ ] キー未定義／空リストのときは現行と完全に同一の挙動（後方互換）
-- [ ] YAML のクォート付き・無し（`"..."` / `'...'` / 素）いずれの記法でも同じ見出しにマッチする
-- [ ] 同じ見出しが ticket.md と note.md の両方にある場合は両方を合算して判定する（`checklist_require` と同じ）
-- [ ] `--force` で迂回できない
-- [ ] `--dry-run` で拒否が見える
-- [ ] plain `./ticket.sh check` は宣言グループの欠落を表示するが exit 0 のまま
-- [ ] 拒否メッセージは「どの見出しが無いか」と「どのグループが実在するか」を出す（`check --require` と同じ体裁）
+- [x] `require_checklist_groups` に宣言した見出しが ticket.md / note.md のどちらにも無ければ `close` が拒否する
+- [x] 見出しはあるが checkbox が 0 個の場合も同様に拒否する
+- [x] 宣言グループに未了 checkbox が残っている場合も拒否する（`require_checklist: false` でも）
+- [x] キー未定義／空リストのときは現行と完全に同一の挙動（後方互換）
+- [x] YAML のクォート付き・無し（`"..."` / `'...'` / 素）いずれの記法でも同じ見出しにマッチする
+- [x] 同じ見出しが ticket.md と note.md の両方にある場合は両方を合算して判定する（`checklist_require` と同じ）
+- [x] `--force` で迂回できない
+- [x] `--dry-run` で拒否が見える
+- [x] plain `./ticket.sh check` は宣言グループの欠落を表示するが exit 0 のまま
+- [x] 拒否メッセージは「どの見出しが無いか」と「どのグループが実在するか」を出す（`check --require` と同じ体裁）
 
 ## Tasks
 
-- [ ] `lib/checklist.sh` に宣言グループ判定を追加（`checklist_require` 流用 + stderr 出力）
-- [ ] `src/ticket.sh` の close preflight に組み込む
-- [ ] config リスト読み取りヘルパー（クォート剥がし込み）
-- [ ] `src/ticket.sh` の config テンプレートにキーとコメントを追加
-- [ ] plain `check` に宣言グループの状態表示を追加
-- [ ] `test/test-checklist.sh` にケース追加（AC の各項目に対応）
-- [ ] Run tests before closing and pass all tests (No exceptions)
-- [ ] Run `bash build.sh` to build the project
-- [ ] Update documentation if necessary
-  - [ ] Update README.*.md
-  - [ ] Update spec.*.md
-  - [ ] Update DEV.md
-- [ ] Get developer approval before closing
+- [x] `lib/checklist.sh` に宣言グループ判定を追加（`checklist_require` 流用 + stderr 出力）
+- [x] `src/ticket.sh` の close preflight に組み込む
+- [x] config リスト読み取りヘルパー（クォート剥がし込み）
+- [x] `src/ticket.sh` の config テンプレートにキーとコメントを追加
+- [x] plain `check` に宣言グループの状態表示を追加
+- [x] `test/test-checklist.sh` にケース追加（AC の各項目に対応）
+- [x] Run tests before closing and pass all tests (No exceptions)
+- [x] Run `bash build.sh` to build the project
+- [x] Update documentation if necessary
+  - [x] Update README.*.md
+  - [x] Update spec.*.md
+  - [x] Update DEV.md
+- [x] Get developer approval before closing

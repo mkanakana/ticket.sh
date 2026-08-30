@@ -9,6 +9,11 @@
 # "<group>"` judges one group across both, and `close` refuses while any are
 # unchecked (opt-in via require_checklist).
 #
+# require_checklist counts unchecked boxes, so a section that is not in the
+# file at all counts zero and reads as finished (issue #5). require_checklist_groups
+# names the headings that have to be there, and close refuses when one is not -
+# sections 13-15 cover it.
+#
 # The parser cases matter as much as the plumbing: these files are full of
 # pasted output and quoted templates, so a checkbox inside a code block must not
 # count, while a checkbox merely indented under another one must.
@@ -143,6 +148,41 @@ mark_item() {
     fi
     sed_i "s|^- \\[ \\] ${label}\$|- [${mark}] ${label}${suffix}|" "$file"
     git add -A && git commit -q -m "Update file"
+}
+
+# Append raw YAML to the config. Written raw so the tests can use the shapes a
+# user actually might - quoted, unquoted, inline - and check they all match the
+# same heading.
+# Usage: config_append <repo-dir> <yaml-text>
+config_append() {
+    local dir="$1" text="$2"
+    cd "$dir" || return 1
+    printf '\n%s\n' "$text" >> .ticket-config.yaml
+    git add -A && git commit -q -m "Declare required groups"
+}
+
+# Replace the require_checklist_groups block with a new one.
+# Usage: set_required_groups <repo-dir> <yaml-text>
+set_required_groups() {
+    local dir="$1" text="$2"
+    cd "$dir" || return 1
+    awk '
+        /^require_checklist_groups:/ { skip = 1; next }
+        skip && /^[[:space:]]*-/ { next }
+        skip { skip = 0 }
+        { print }
+    ' .ticket-config.yaml > .ticket-config.yaml.new
+    mv .ticket-config.yaml.new .ticket-config.yaml
+    printf '\n%s\n' "$text" >> .ticket-config.yaml
+    git add -A && git commit -q -m "Redeclare required groups"
+}
+
+# Append lines to a file and commit.
+# Usage: append_and_commit <file> <text>
+append_and_commit() {
+    local file="$1" text="$2"
+    printf '%s\n' "$text" >> "$file"
+    git add -A && git commit -q -m "Edit note"
 }
 
 # ---------------------------------------------------------------------------
@@ -837,6 +877,158 @@ if [[ $? -eq 0 ]]; then
     pass "a ticket with no note file closes on its ticket body alone"
 else
     fail "a missing note means nothing to judge there" "$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "13. require_checklist_groups: a section that is not there"
+# ---------------------------------------------------------------------------
+# The gate stays OFF throughout this section. Declaring a group is its own
+# opt-in, and a project that has not turned require_checklist on still gets the
+# groups it named.
+REPO=$(make_repo repo13)
+set_templates "$REPO" false
+TICKET=$(begin_ticket "$REPO" probes)
+config_append "$REPO" 'require_checklist_groups:
+  - "Required Probes"'
+
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -ne 0 ]] && echo "$OUT" | grep -q "required checklist group is missing"; then
+    pass "close refuses when a declared group is in neither file"
+else
+    fail "a declared group that is nowhere should stop close" "$OUT"
+fi
+
+if echo "$OUT" | grep -q "Groups that do exist:"; then
+    pass "the refusal lists the groups that do exist"
+else
+    fail "expected the existing groups in the message" "$OUT"
+fi
+
+OUT=$(timeout 20 ./ticket.sh close --force --dry-run 2>&1)
+if [[ $? -ne 0 ]] && echo "$OUT" | grep -q "required checklist group is missing"; then
+    pass "--force does not bypass a missing declared group"
+else
+    fail "--force is about the Git tree, not this" "$OUT"
+fi
+
+OUT=$(timeout 20 ./ticket.sh check 2>&1)
+if [[ $? -eq 0 ]] && echo "$OUT" | grep -q "missing  (close will refuse)"; then
+    pass "check shows the missing group and still exits 0"
+else
+    fail "check reports, close refuses" "$OUT"
+fi
+
+# A heading with no checkboxes under it never becomes a group, so it is the
+# same case: there is nothing there to have been judged.
+append_and_commit "tickets/${TICKET}/note.md" '
+## Required Probes
+
+nothing to tick here yet'
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -ne 0 ]] && echo "$OUT" | grep -q "required checklist group is missing"; then
+    pass "a declared heading with no checkboxes under it still refuses"
+else
+    fail "an empty section is nothing to judge" "$OUT"
+fi
+
+append_and_commit "tickets/${TICKET}/note.md" '- [ ] probe AC-1 by hand'
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -ne 0 ]] && echo "$OUT" | grep -q "Required Probes: 0 / 1"; then
+    pass "an unchecked item in a declared group refuses with the gate off"
+else
+    fail "declaring a group judges it, gate or no gate" "$OUT"
+fi
+
+mark_item "tickets/${TICKET}/note.md" "probe AC-1 by hand" x
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -eq 0 ]]; then
+    pass "close proceeds once the declared group is settled, gate off"
+else
+    fail "with the gate off, only the declared group is judged" "$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "14. require_checklist_groups: how the name is written, and where it is looked for"
+# ---------------------------------------------------------------------------
+REPO=$(make_repo repo14)
+set_templates "$REPO" false
+TICKET=$(begin_ticket "$REPO" quoting)
+
+# "Implementation log" is in the note template with two unchecked items. Each
+# shape below has to reach it: a name that fails to match comes back "missing",
+# so the two outcomes are easy to tell apart.
+for SHAPE in 'require_checklist_groups:
+  - Implementation log' 'require_checklist_groups:
+  - "Implementation log"' "require_checklist_groups:
+  - 'Implementation log'" 'require_checklist_groups: ["Implementation log"]' 'require_checklist_groups: "Implementation log"'; do
+    set_required_groups "$REPO" "$SHAPE"
+    OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+    LABEL=$(printf '%s' "$SHAPE" | tr '\n' ' ')
+    if echo "$OUT" | grep -q "Implementation log: 0 / 2"; then
+        pass "matched the heading, written as: ${LABEL}"
+    else
+        fail "this shape did not reach the heading: ${LABEL}" "$OUT"
+    fi
+done
+
+# The name is matched against heading text alone, in either file - callers say
+# which stage they expect finished, not which file the author kept it in.
+set_required_groups "$REPO" 'require_checklist_groups:
+  - "Tasks"'
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -ne 0 ]] && echo "$OUT" | grep -q "Tasks: 0 / 1"; then
+    pass "a group that lives in the ticket body is found too"
+else
+    fail "both files are searched for the declared name" "$OUT"
+fi
+
+mark_item "tickets/${TICKET}/ticket.md" "write the thing" x
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -eq 0 ]]; then
+    pass "settling the ticket-side group lets close through"
+else
+    fail "expected the declared ticket-body group to pass" "$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "15. require_checklist_groups: nothing declared, and both checks together"
+# ---------------------------------------------------------------------------
+REPO=$(make_repo repo15)
+set_templates "$REPO" false
+TICKET=$(begin_ticket "$REPO" nogroups)
+
+# An empty list is the same as no key: everything is still unchecked here, and
+# with the gate off that has never blocked a close.
+config_append "$REPO" 'require_checklist_groups: []'
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -eq 0 ]]; then
+    pass "an empty list leaves close exactly as it was"
+else
+    fail "declaring nothing must not start refusing" "$OUT"
+fi
+
+OUT=$(timeout 20 ./ticket.sh check 2>&1)
+if echo "$OUT" | grep -q "Required groups"; then
+    fail "check should say nothing about groups when none are declared" "$OUT"
+else
+    pass "check says nothing about groups when none are declared"
+fi
+
+# With the whole-file gate on as well, the missing section is reported first:
+# it is the more basic answer, and someone shown the unchecked list first would
+# fill it in only to be told the section they needed was never there.
+sed_i 's/^require_checklist: false/require_checklist: true/' .ticket-config.yaml
+set_required_groups "$REPO" 'require_checklist_groups:
+  - "Required Probes"'
+OUT=$(timeout 20 ./ticket.sh close --dry-run 2>&1)
+if [[ $? -ne 0 ]] && [[ "$(echo "$OUT" | grep -c "unchecked item")" -eq 0 ]] \
+        && echo "$OUT" | grep -q "required checklist group is missing"; then
+    pass "the missing group is reported before the unchecked items"
+else
+    fail "expected the missing group first" "$OUT"
 fi
 
 # ---------------------------------------------------------------------------

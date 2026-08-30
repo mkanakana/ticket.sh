@@ -368,6 +368,68 @@ checklist_report() {
     return 0
 }
 
+# Evaluate one group by name over the aggregate already in CL_*, and leave the
+# answer in CLG_*:
+#
+#   CLG_MATCHED   1 when at least one group carries that heading
+#   CLG_TOTAL  CLG_DONE  CLG_SKIP
+#   CLG_TODO      newline-separated labels of the unchecked ones
+#
+# A heading with no checkboxes under it never becomes a group at all (see
+# checklist_aggregate), so it comes back unmatched. That is what lets the
+# callers tell "the section is not there" from "the section is finished" -
+# counting unchecked boxes cannot, because both come to zero.
+_checklist_group_eval() {
+    local want="$1"
+
+    CLG_MATCHED=0
+    CLG_TOTAL=0
+    CLG_DONE=0
+    CLG_SKIP=0
+    CLG_TODO=""
+
+    local i=0
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_GROUPS[$i]}" == "$want" ]]; then
+            CLG_MATCHED=1
+            CLG_TOTAL=$(( CLG_TOTAL + ${CL_TOTAL[$i]} ))
+            CLG_DONE=$(( CLG_DONE + ${CL_DONE[$i]} ))
+            CLG_SKIP=$(( CLG_SKIP + ${CL_SKIP[$i]} ))
+            if [[ -n "${CL_TODO[$i]}" ]]; then
+                if [[ -n "$CLG_TODO" ]]; then
+                    CLG_TODO="${CLG_TODO}"$'\n'"${CL_TODO[$i]}"
+                else
+                    CLG_TODO="${CL_TODO[$i]}"
+                fi
+            fi
+        fi
+        i=$((i + 1))
+    done
+
+    return 0
+}
+
+# The groups that do exist, printed under a failure so the reader can see what
+# the name should have been.
+_checklist_print_groups() {
+    if [[ ${#CL_GROUPS[@]} -eq 0 ]]; then
+        echo "Neither the ticket nor the note has any checkboxes."
+        return 0
+    fi
+
+    echo "Groups that do exist:"
+    local current="" i=0
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_FILES[$i]}" != "$current" ]]; then
+            current="${CL_FILES[$i]}"
+            echo "  ${current}"
+        fi
+        echo "    - ${CL_GROUPS[$i]}"
+        i=$((i + 1))
+    done
+    return 0
+}
+
 # Judge a single group, named by the caller. The caller is the one that knows
 # which stage the work is at; ticket.sh only has to match a string.
 #
@@ -388,65 +450,169 @@ checklist_require() {
     local want="$3"
 
     checklist_aggregate "$ticket_file" "$note_file"
+    _checklist_group_eval "$want"
 
-    local i=0 matched=0 total=0 done_count=0 skipped=0 todo=""
-    while (( i < ${#CL_GROUPS[@]} )); do
-        if [[ "${CL_GROUPS[$i]}" == "$want" ]]; then
-            matched=1
-            total=$(( total + ${CL_TOTAL[$i]} ))
-            done_count=$(( done_count + ${CL_DONE[$i]} ))
-            skipped=$(( skipped + ${CL_SKIP[$i]} ))
-            if [[ -n "${CL_TODO[$i]}" ]]; then
-                if [[ -n "$todo" ]]; then
-                    todo="${todo}"$'\n'"${CL_TODO[$i]}"
-                else
-                    todo="${CL_TODO[$i]}"
-                fi
-            fi
-        fi
-        i=$((i + 1))
-    done
-
-    if [[ $matched -eq 0 ]]; then
+    if [[ $CLG_MATCHED -eq 0 ]]; then
         echo "✗ No checklist group named \"${want}\""
         echo ""
-        if [[ ${#CL_GROUPS[@]} -eq 0 ]]; then
-            echo "Neither the ticket nor the note has any checkboxes."
-        else
-            echo "Groups that do exist:"
-            local current=""
-            i=0
-            while (( i < ${#CL_GROUPS[@]} )); do
-                if [[ "${CL_FILES[$i]}" != "$current" ]]; then
-                    current="${CL_FILES[$i]}"
-                    echo "  ${current}"
-                fi
-                echo "    - ${CL_GROUPS[$i]}"
-                i=$((i + 1))
-            done
-        fi
+        _checklist_print_groups
         return 1
     fi
 
-    if [[ -z "$todo" ]]; then
-        local msg="✓ ${want}: ${done_count} / ${total}"
-        if (( skipped > 0 )); then
-            msg="${msg}  (${skipped} skipped)"
+    if [[ -z "$CLG_TODO" ]]; then
+        local msg="✓ ${want}: ${CLG_DONE} / ${CLG_TOTAL}"
+        if (( CLG_SKIP > 0 )); then
+            msg="${msg}  (${CLG_SKIP} skipped)"
         fi
         echo "$msg"
         return 0
     fi
 
-    echo "✗ ${want}: ${done_count} / ${total}"
+    echo "✗ ${want}: ${CLG_DONE} / ${CLG_TOTAL}"
     echo ""
     echo "  Unchecked"
     local label
     while IFS= read -r label; do
         echo "    - ${label}"
-    done <<< "$todo"
+    done <<< "$CLG_TODO"
     echo ""
     checklist_hint
     return 1
+}
+
+# Judge the groups the config declares must be there - the
+# `require_checklist_groups` key. Used by close's preflight.
+#
+# This is the half `require_checklist` cannot cover. That one counts unchecked
+# boxes, so a section that is not in the file at all contributes nothing and
+# reads exactly like a section where everything got done: close passes, and
+# nothing in the output says the check looked at nothing. Naming the section
+# here turns its absence into a refusal, the same way checklist_require already
+# treats a name that matches nothing as a failure rather than a pass.
+#
+# What is refused, per declared name:
+#   - no heading by that name in either file          -> missing
+#   - a heading by that name with no checkboxes under -> missing (same thing,
+#     as far as the aggregate is concerned, and the same thing to a reader:
+#     there is nothing there to have been judged)
+#   - checkboxes by that name still unchecked         -> unfinished
+#
+# The last one overlaps with require_checklist when that is on. It is here
+# anyway, because the two keys are independent: declaring a group is the opt-in
+# for that group, whether or not the whole-file gate is switched on.
+#
+# Prints nothing when every declared name is present and settled. Writes to
+# stdout; close redirects it to stderr alongside its other refusals.
+#
+# Usage: checklist_require_groups <ticket-file> <note-file> <name>...
+checklist_require_groups() {
+    local ticket_file="$1"
+    local note_file="$2"
+    shift 2
+    [[ $# -eq 0 ]] && return 0
+
+    checklist_aggregate "$ticket_file" "$note_file"
+
+    local want missing="" unfinished="" failed=0
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        _checklist_group_eval "$want"
+        if [[ $CLG_MATCHED -eq 0 ]]; then
+            missing="${missing}${want}"$'\n'
+            failed=1
+        elif [[ -n "$CLG_TODO" ]]; then
+            unfinished="${unfinished}${want}"$'\n'
+            failed=1
+        fi
+    done
+    [[ $failed -eq 0 ]] && return 0
+
+    local name label
+    if [[ -n "$missing" ]]; then
+        local count=0
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            count=$((count + 1))
+        done <<< "$missing"
+        local noun="required checklist groups are missing"
+        [[ $count -eq 1 ]] && noun="required checklist group is missing"
+        echo "✗ ${count} ${noun}"
+        echo ""
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            echo "    - ${name}"
+        done <<< "$missing"
+        echo ""
+        echo "Declared in config under \`require_checklist_groups\`. A group is a heading"
+        echo "with at least one checkbox under it, in the ticket body or the note."
+        echo ""
+        _checklist_print_groups
+    fi
+
+    if [[ -n "$unfinished" ]]; then
+        [[ -n "$missing" ]] && echo ""
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            _checklist_group_eval "$name"
+            echo "✗ ${name}: ${CLG_DONE} / ${CLG_TOTAL}"
+            echo ""
+            echo "  Unchecked"
+            while IFS= read -r label; do
+                echo "    - ${label}"
+            done <<< "$CLG_TODO"
+            echo ""
+        done <<< "$unfinished"
+        checklist_hint
+    fi
+
+    return 1
+}
+
+# Show where the declared groups stand, without judging. `check` is
+# deliberately a command that never fails - mid-ticket, the later groups being
+# empty is the normal state - so a missing required group is shown here and
+# refused at close.
+#
+# Usage: checklist_report_groups <ticket-file> <note-file> <name>...
+checklist_report_groups() {
+    local ticket_file="$1"
+    local note_file="$2"
+    shift 2
+    [[ $# -eq 0 ]] && return 0
+
+    checklist_aggregate "$ticket_file" "$note_file"
+
+    local want width=0
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        (( ${#want} > width )) && width=${#want}
+    done
+    width=$((width + 4))
+
+    echo ""
+    echo "Required groups"
+
+    local pad line
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        _checklist_group_eval "$want"
+        pad=""
+        while (( ${#want} + ${#pad} < width )); do pad="${pad} "; done
+        if [[ $CLG_MATCHED -eq 0 ]]; then
+            line="    ${want}${pad}missing  (close will refuse)"
+        else
+            line="    ${want}${pad}${CLG_DONE} / ${CLG_TOTAL}"
+            if [[ -z "$CLG_TODO" ]]; then
+                line="${line}  done"
+                if (( CLG_SKIP > 0 )); then
+                    line="${line} (${CLG_SKIP} skipped)"
+                fi
+            fi
+        fi
+        echo "$line"
+    done
+
+    return 0
 }
 
 # Judge every group in both files. Used by close's preflight.

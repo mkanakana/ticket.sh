@@ -12,7 +12,7 @@ fi
 # Source file: src/ticket.sh
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20260827.022515
+# Version: 20260830.110226
 # Built from source files
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
@@ -1678,6 +1678,68 @@ checklist_report() {
     return 0
 }
 
+# Evaluate one group by name over the aggregate already in CL_*, and leave the
+# answer in CLG_*:
+#
+#   CLG_MATCHED   1 when at least one group carries that heading
+#   CLG_TOTAL  CLG_DONE  CLG_SKIP
+#   CLG_TODO      newline-separated labels of the unchecked ones
+#
+# A heading with no checkboxes under it never becomes a group at all (see
+# checklist_aggregate), so it comes back unmatched. That is what lets the
+# callers tell "the section is not there" from "the section is finished" -
+# counting unchecked boxes cannot, because both come to zero.
+_checklist_group_eval() {
+    local want="$1"
+
+    CLG_MATCHED=0
+    CLG_TOTAL=0
+    CLG_DONE=0
+    CLG_SKIP=0
+    CLG_TODO=""
+
+    local i=0
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_GROUPS[$i]}" == "$want" ]]; then
+            CLG_MATCHED=1
+            CLG_TOTAL=$(( CLG_TOTAL + ${CL_TOTAL[$i]} ))
+            CLG_DONE=$(( CLG_DONE + ${CL_DONE[$i]} ))
+            CLG_SKIP=$(( CLG_SKIP + ${CL_SKIP[$i]} ))
+            if [[ -n "${CL_TODO[$i]}" ]]; then
+                if [[ -n "$CLG_TODO" ]]; then
+                    CLG_TODO="${CLG_TODO}"$'\n'"${CL_TODO[$i]}"
+                else
+                    CLG_TODO="${CL_TODO[$i]}"
+                fi
+            fi
+        fi
+        i=$((i + 1))
+    done
+
+    return 0
+}
+
+# The groups that do exist, printed under a failure so the reader can see what
+# the name should have been.
+_checklist_print_groups() {
+    if [[ ${#CL_GROUPS[@]} -eq 0 ]]; then
+        echo "Neither the ticket nor the note has any checkboxes."
+        return 0
+    fi
+
+    echo "Groups that do exist:"
+    local current="" i=0
+    while (( i < ${#CL_GROUPS[@]} )); do
+        if [[ "${CL_FILES[$i]}" != "$current" ]]; then
+            current="${CL_FILES[$i]}"
+            echo "  ${current}"
+        fi
+        echo "    - ${CL_GROUPS[$i]}"
+        i=$((i + 1))
+    done
+    return 0
+}
+
 # Judge a single group, named by the caller. The caller is the one that knows
 # which stage the work is at; ticket.sh only has to match a string.
 #
@@ -1698,65 +1760,169 @@ checklist_require() {
     local want="$3"
 
     checklist_aggregate "$ticket_file" "$note_file"
+    _checklist_group_eval "$want"
 
-    local i=0 matched=0 total=0 done_count=0 skipped=0 todo=""
-    while (( i < ${#CL_GROUPS[@]} )); do
-        if [[ "${CL_GROUPS[$i]}" == "$want" ]]; then
-            matched=1
-            total=$(( total + ${CL_TOTAL[$i]} ))
-            done_count=$(( done_count + ${CL_DONE[$i]} ))
-            skipped=$(( skipped + ${CL_SKIP[$i]} ))
-            if [[ -n "${CL_TODO[$i]}" ]]; then
-                if [[ -n "$todo" ]]; then
-                    todo="${todo}"$'\n'"${CL_TODO[$i]}"
-                else
-                    todo="${CL_TODO[$i]}"
-                fi
-            fi
-        fi
-        i=$((i + 1))
-    done
-
-    if [[ $matched -eq 0 ]]; then
+    if [[ $CLG_MATCHED -eq 0 ]]; then
         echo "✗ No checklist group named \"${want}\""
         echo ""
-        if [[ ${#CL_GROUPS[@]} -eq 0 ]]; then
-            echo "Neither the ticket nor the note has any checkboxes."
-        else
-            echo "Groups that do exist:"
-            local current=""
-            i=0
-            while (( i < ${#CL_GROUPS[@]} )); do
-                if [[ "${CL_FILES[$i]}" != "$current" ]]; then
-                    current="${CL_FILES[$i]}"
-                    echo "  ${current}"
-                fi
-                echo "    - ${CL_GROUPS[$i]}"
-                i=$((i + 1))
-            done
-        fi
+        _checklist_print_groups
         return 1
     fi
 
-    if [[ -z "$todo" ]]; then
-        local msg="✓ ${want}: ${done_count} / ${total}"
-        if (( skipped > 0 )); then
-            msg="${msg}  (${skipped} skipped)"
+    if [[ -z "$CLG_TODO" ]]; then
+        local msg="✓ ${want}: ${CLG_DONE} / ${CLG_TOTAL}"
+        if (( CLG_SKIP > 0 )); then
+            msg="${msg}  (${CLG_SKIP} skipped)"
         fi
         echo "$msg"
         return 0
     fi
 
-    echo "✗ ${want}: ${done_count} / ${total}"
+    echo "✗ ${want}: ${CLG_DONE} / ${CLG_TOTAL}"
     echo ""
     echo "  Unchecked"
     local label
     while IFS= read -r label; do
         echo "    - ${label}"
-    done <<< "$todo"
+    done <<< "$CLG_TODO"
     echo ""
     checklist_hint
     return 1
+}
+
+# Judge the groups the config declares must be there - the
+# `require_checklist_groups` key. Used by close's preflight.
+#
+# This is the half `require_checklist` cannot cover. That one counts unchecked
+# boxes, so a section that is not in the file at all contributes nothing and
+# reads exactly like a section where everything got done: close passes, and
+# nothing in the output says the check looked at nothing. Naming the section
+# here turns its absence into a refusal, the same way checklist_require already
+# treats a name that matches nothing as a failure rather than a pass.
+#
+# What is refused, per declared name:
+#   - no heading by that name in either file          -> missing
+#   - a heading by that name with no checkboxes under -> missing (same thing,
+#     as far as the aggregate is concerned, and the same thing to a reader:
+#     there is nothing there to have been judged)
+#   - checkboxes by that name still unchecked         -> unfinished
+#
+# The last one overlaps with require_checklist when that is on. It is here
+# anyway, because the two keys are independent: declaring a group is the opt-in
+# for that group, whether or not the whole-file gate is switched on.
+#
+# Prints nothing when every declared name is present and settled. Writes to
+# stdout; close redirects it to stderr alongside its other refusals.
+#
+# Usage: checklist_require_groups <ticket-file> <note-file> <name>...
+checklist_require_groups() {
+    local ticket_file="$1"
+    local note_file="$2"
+    shift 2
+    [[ $# -eq 0 ]] && return 0
+
+    checklist_aggregate "$ticket_file" "$note_file"
+
+    local want missing="" unfinished="" failed=0
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        _checklist_group_eval "$want"
+        if [[ $CLG_MATCHED -eq 0 ]]; then
+            missing="${missing}${want}"$'\n'
+            failed=1
+        elif [[ -n "$CLG_TODO" ]]; then
+            unfinished="${unfinished}${want}"$'\n'
+            failed=1
+        fi
+    done
+    [[ $failed -eq 0 ]] && return 0
+
+    local name label
+    if [[ -n "$missing" ]]; then
+        local count=0
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            count=$((count + 1))
+        done <<< "$missing"
+        local noun="required checklist groups are missing"
+        [[ $count -eq 1 ]] && noun="required checklist group is missing"
+        echo "✗ ${count} ${noun}"
+        echo ""
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            echo "    - ${name}"
+        done <<< "$missing"
+        echo ""
+        echo "Declared in config under \`require_checklist_groups\`. A group is a heading"
+        echo "with at least one checkbox under it, in the ticket body or the note."
+        echo ""
+        _checklist_print_groups
+    fi
+
+    if [[ -n "$unfinished" ]]; then
+        [[ -n "$missing" ]] && echo ""
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            _checklist_group_eval "$name"
+            echo "✗ ${name}: ${CLG_DONE} / ${CLG_TOTAL}"
+            echo ""
+            echo "  Unchecked"
+            while IFS= read -r label; do
+                echo "    - ${label}"
+            done <<< "$CLG_TODO"
+            echo ""
+        done <<< "$unfinished"
+        checklist_hint
+    fi
+
+    return 1
+}
+
+# Show where the declared groups stand, without judging. `check` is
+# deliberately a command that never fails - mid-ticket, the later groups being
+# empty is the normal state - so a missing required group is shown here and
+# refused at close.
+#
+# Usage: checklist_report_groups <ticket-file> <note-file> <name>...
+checklist_report_groups() {
+    local ticket_file="$1"
+    local note_file="$2"
+    shift 2
+    [[ $# -eq 0 ]] && return 0
+
+    checklist_aggregate "$ticket_file" "$note_file"
+
+    local want width=0
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        (( ${#want} > width )) && width=${#want}
+    done
+    width=$((width + 4))
+
+    echo ""
+    echo "Required groups"
+
+    local pad line
+    for want in "$@"; do
+        [[ -z "$want" ]] && continue
+        _checklist_group_eval "$want"
+        pad=""
+        while (( ${#want} + ${#pad} < width )); do pad="${pad} "; done
+        if [[ $CLG_MATCHED -eq 0 ]]; then
+            line="    ${want}${pad}missing  (close will refuse)"
+        else
+            line="    ${want}${pad}${CLG_DONE} / ${CLG_TOTAL}"
+            if [[ -z "$CLG_TODO" ]]; then
+                line="${line}  done"
+                if (( CLG_SKIP > 0 )); then
+                    line="${line} (${CLG_SKIP} skipped)"
+                fi
+            fi
+        fi
+        echo "$line"
+    done
+
+    return 0
 }
 
 # Judge every group in both files. Used by close's preflight.
@@ -1811,7 +1977,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 # ticket.sh - Git-based Ticket Management System for Development
-# Version: 20260827.022515
+# Version: 20260830.110226
 #
 # A lightweight ticket management system that uses Git branches and Markdown files.
 # Perfect for small teams, solo developers, and AI coding assistants.
@@ -1903,7 +2069,7 @@ SCRIPT_COMMAND=$(get_script_command)
 
 
 # Global variables
-VERSION="20260827.022515"  # This will be replaced during build
+VERSION="20260830.110226"  # This will be replaced during build
 CONFIG_FILE=""  # Will be set dynamically by get_config_file()
 CURRENT_TICKET_LINK="current-ticket.md"
 CURRENT_NOTE_LINK="current-note.md"
@@ -2009,12 +2175,13 @@ be recognized by every command; they are never auto-migrated.
 - \`$SCRIPT_COMMAND restore\` - Restore current-ticket.md symlink from branch name
 - \`$SCRIPT_COMMAND check [--require "<group name>"]\` - Check current directory and ticket/branch synchronization status
   - Also reports the checklists in **both** the ticket body (its \`## Tasks\` list) and the note, listed per file. Every checkbox is grouped by the nearest preceding heading above it. \`- [x]\` is done, \`- [ ]\` is unchecked, and \`- [-] ... - skip: <reason>\` marks an item that does not apply to this ticket (a \`[-]\` with no reason counts as unchecked). Checkboxes inside code blocks are ignored; ones merely nested under another item are not. The ticket's YAML frontmatter is skipped, so a \`- [ ]\` inside a multi-line \`description\` is not counted.
-  - Plain \`check\` never fails on an unfinished checklist - mid-ticket, the later groups being empty is the normal state.
+  - Plain \`check\` never fails on an unfinished checklist - mid-ticket, the later groups being empty is the normal state. With \`require_checklist_groups\` set, it also shows where those groups stand (a missing one as \`missing  (close will refuse)\`), and still exits 0.
   - \`--require "<group name>"\` judges that one group and exits 1 if anything in it is unchecked. The name matches heading text in either file, so callers name the stage, not the file. Use it when the caller knows which stage the work is at; ticket.sh has no notion of stages. A name that matches no group is an error, not a pass, so a typo cannot become a check that always succeeds.
 - \`$SCRIPT_COMMAND close [--no-push] [--force|-f] [--no-delete-remote] [--keep-worktree] [--dry-run|-n]\` - Complete current ticket (squash merge to default branch)
   - \`--dry-run\` (\`-n\`) runs all preflight checks (clean working dir, branch, ticket state, base_branch existence, worktree main repo state) and exits before any commit/merge. Useful for catching format mistakes or stale state before the real close. Note: pre-commit hooks are NOT executed by --dry-run.
   - The squash commit's subject is \`[<ticket-name>] <description>\` (description folded onto one line), and its body is the ticket's **Markdown body only** - the YAML frontmatter is never included. This is fixed behavior with no config key. Keeping the body in the message is what lets \`git blame\` reach the reasoning without opening \`tickets/done/\`.
   - With \`require_checklist: true\` in config, close refuses while the ticket body or the note has unchecked items, and lists them per file. Off by default. \`--force\` does not bypass it: the way out is \`- [-] ... - skip: <reason>\`, which leaves the reason in the file. \`--dry-run\` surfaces it too.
+  - \`require_checklist_groups\` (a list of heading names) makes close refuse when a named group is in **neither** file - or is there with no checkboxes under it - as well as when anything under it is unchecked. \`require_checklist\` alone cannot catch this: it counts unchecked boxes, so a section that is not in the file at all counts zero and reads exactly like one where everything got done. Empty by default, independent of \`require_checklist\`, and not bypassed by \`--force\`.
   - From a worktree, close refuses to merge if the main repo is on a non-default branch or has uncommitted changes (protects parallel workers).
   - **Coding agents (Claude Code / Codex / etc.) must pass \`--keep-worktree\`**: without it, the worker's worktree is deleted and the agent's shell cwd points to a removed directory → every subsequent Bash tool call fails.
   - \`--no-merge [--closed-at <ISO8601-UTC>] <ticket-name>\` - Skip the squash-merge (assume the ticket's changes are already on the base branch, e.g. after a GitHub PR merge). Only set closed_at, move the ticket/note to done/, commit and push. Requires \`<ticket-name>\`. \`--closed-at\` overrides closed_at with a full ISO8601 UTC value (default: now).
@@ -2208,6 +2375,17 @@ delete_remote_on_close: $DEFAULT_DELETE_REMOTE_ON_CLOSE
 # 'check' always reports the state regardless of this setting, and
 # 'check --require "<group>"' judges a single group on demand.
 require_checklist: $DEFAULT_REQUIRE_CHECKLIST
+
+# Headings that have to be there. require_checklist counts unchecked boxes, so
+# a section that is not in the file at all counts zero and passes - it reads
+# exactly like a section where everything got done. Naming a heading here makes
+# close refuse when neither the ticket body nor the note has it (or has it with
+# no checkboxes under it), which is what catches a ticket made before the
+# template, written by hand, or carried over from another template.
+# Empty by default: with nothing declared, close behaves exactly as it did.
+# Independent of require_checklist - the list itself is the opt-in.
+# require_checklist_groups:
+#   - "Required Probes"
 
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)
@@ -2968,6 +3146,62 @@ emit_active_ticket_paths() {
         echo "  legacy_note:  legacy flat layout — no per-ticket directory, no tmp_dir. Ticket body lives at the shown path; note lives as a sibling <name>-note.md file."
     fi
     echo ""
+}
+
+# Strip surrounding whitespace and one matching pair of quotes.
+#
+# yaml-sh takes the quotes off an inline list ([a, b]) but leaves them on dash
+# notation, so `- "Required Probes"` arrives quotes and all. Compared like that
+# against heading text it would never match, and a required group that can
+# never match is a check that always fails - the mirror of the hole this is
+# closing. One pair only: a heading that really is written "Done", quotes
+# included, is not worth the escape syntax yaml-sh does not have anyway.
+_config_unquote() {
+    local v="$1"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    if (( ${#v} >= 2 )); then
+        local first="${v:0:1}" last="${v: -1}"
+        if [[ "$first" == '"' && "$last" == '"' ]] || [[ "$first" == "'" && "$last" == "'" ]]; then
+            v="${v:1:${#v}-2}"
+        fi
+    fi
+    printf '%s' "$v"
+}
+
+# Read a YAML list from the already-parsed config into CONFIG_LIST[].
+#
+# yaml-sh stores list items as '<key>.<n>'. A scalar under the key is read as a
+# one-item list: `require_checklist_groups: "Required Probes"` is a natural way
+# to write it, and the alternative - reading it as no list at all - would be a
+# config that says it is enforcing something while nothing is looked at, which
+# is the exact failure this key exists to end.
+#
+# Bash 3.2 has no way to return an array, and expanding an empty one under
+# `set -u` is an error there, so callers read CONFIG_LIST with the
+# ${CONFIG_LIST[@]+"${CONFIG_LIST[@]}"} guard.
+#
+# Usage: config_read_list <key>
+config_read_list() {
+    local key="$1"
+    CONFIG_LIST=()
+
+    local size item i=0
+    size=$(yaml_list_size "$key" 2>/dev/null || echo 0)
+    [[ -z "$size" ]] && size=0
+
+    if (( size > 0 )); then
+        while (( i < size )); do
+            item=$(_config_unquote "$(yaml_get "${key}.${i}" || echo "")")
+            [[ -n "$item" ]] && CONFIG_LIST[${#CONFIG_LIST[@]}]="$item"
+            i=$((i + 1))
+        done
+        return 0
+    fi
+
+    item=$(_config_unquote "$(yaml_get "$key" 2>/dev/null || echo "")")
+    [[ -n "$item" ]] && CONFIG_LIST[0]="$item"
+    return 0
 }
 
 # The checklist config key was named require_note_checklist while the check only
@@ -4013,6 +4247,10 @@ cmd_check() {
     local tickets_dir=$(yaml_get "tickets_dir" || echo "$DEFAULT_TICKETS_DIR")
     local branch_prefix=$(yaml_get "branch_prefix" || echo "$DEFAULT_BRANCH_PREFIX")
     check_legacy_checklist_key || return 1
+    # Read here: the yaml-sh globals get reused for the ticket's frontmatter
+    # further down.
+    config_read_list "require_checklist_groups"
+    local _required_groups=(${CONFIG_LIST[@]+"${CONFIG_LIST[@]}"})
     
     # Get current branch
     local current_branch=$(get_current_branch)
@@ -4203,6 +4441,10 @@ cmd_check() {
     fi
 
     checklist_report "$checklist_ticket_file" "$checklist_note_file"
+    # Shown, not judged: `check` stays a command that never fails, and close is
+    # where a missing required group is refused.
+    checklist_report_groups "$checklist_ticket_file" "$checklist_note_file" \
+        ${_required_groups[@]+"${_required_groups[@]}"}
 }
 
 # Finalize a ticket without merging (close --no-merge).
@@ -4492,6 +4734,11 @@ EOF
     local close_success_message=$(yaml_get "close_success_message" || echo "$DEFAULT_CLOSE_SUCCESS_MESSAGE")
     local require_checklist=$(yaml_get "require_checklist" || echo "$DEFAULT_REQUIRE_CHECKLIST")
     check_legacy_checklist_key || return 1
+    # Read here, not at the point of use: the ticket's own frontmatter is
+    # parsed into the same yaml-sh globals further down, which overwrites the
+    # config.
+    config_read_list "require_checklist_groups"
+    local _required_groups=(${CONFIG_LIST[@]+"${CONFIG_LIST[@]}"})
     
     # Check current branch
     local current_branch=$(get_current_branch)
@@ -4607,21 +4854,35 @@ EOF
         fi
     fi
 
-    # Refuse to close while the ticket body or the note still has unchecked
-    # checklist items.
+    # Refuse to close while a checklist the config asked for is unsettled:
+    # a group named in require_checklist_groups that is not in either file, or
+    # - with require_checklist on - any unchecked item anywhere.
     # Deliberately NOT bypassed by --force: --force is about the state of the
     # Git tree (a ticket file that also moved on the base branch), and the way
     # out of this one is to mark the item `- [-] ... - skip: <reason>`, which
     # leaves the reason in the file where a reader can weigh it. An escape
     # hatch that records nothing would put the checklist right back where it
     # was - present, and never looked at.
-    if [[ "$require_checklist" == "true" ]]; then
-        local _close_note_file
-        if [[ "${ticket_file##*/}" == "ticket.md" ]]; then
-            _close_note_file="${ticket_file%/ticket.md}/note.md"
-        else
-            _close_note_file="${ticket_file%.md}-note.md"
+    local _close_note_file
+    if [[ "${ticket_file##*/}" == "ticket.md" ]]; then
+        _close_note_file="${ticket_file%/ticket.md}/note.md"
+    else
+        _close_note_file="${ticket_file%.md}-note.md"
+    fi
+
+    # Declared groups first. "The section is not in the file" is the more basic
+    # answer of the two, and someone shown the unchecked list first would fill
+    # it in only to be told afterwards that the section they needed was never
+    # there.
+    if [[ ${#_required_groups[@]} -gt 0 ]]; then
+        if ! checklist_require_groups "$ticket_file" "$_close_note_file" \
+                ${_required_groups[@]+"${_required_groups[@]}"} >&2; then
+            echo "Nothing was closed." >&2
+            return 1
         fi
+    fi
+
+    if [[ "$require_checklist" == "true" ]]; then
         # A ticket with no note file at all (note_content undefined in config)
         # simply contributes nothing, and checklist_gate passes when neither
         # file holds a checkbox.

@@ -253,6 +253,14 @@ no_verify: false
 # once.
 require_checklist: false
 
+# Headings that have to be there. require_checklist counts unchecked boxes, so a
+# section that is not in the file at all counts zero and reads as finished.
+# Naming a heading here makes close refuse when neither file has it, and while
+# anything under it is unchecked. Empty by default; independent of
+# require_checklist.
+# require_checklist_groups:
+#   - "Required Probes"
+
 # Worktree mode (optional)
 # worktree_mode: false    # When true, 'start' always creates a worktree
 # worktree_dir: ""        # Custom worktree base directory
@@ -289,6 +297,7 @@ repository: "origin"
 auto_push: true
 no_verify: false
 require_checklist: false
+require_checklist_groups: []
 default_content: |
   # Ticket Overview
   
@@ -757,6 +766,15 @@ Checklist: 6 / 16
         - findings resolved
 ```
 
+When `require_checklist_groups` is set in config, `check` also shows where those
+groups stand, and still exits 0:
+
+```
+Required groups
+    Required Probes    missing  (close will refuse)
+    Review             1 / 1  done
+```
+
 **What `check` deliberately does not do**
 
 Left to the caller, on purpose:
@@ -778,6 +796,38 @@ Completes ticket and merge process:
 With `require_checklist: true` in config, close refuses while the ticket body or
 the note has unchecked items, lists them by file and group, and changes nothing.
 Off by default. See `check` above for how the checklists are read.
+
+**Required groups** (`require_checklist_groups`)
+
+`require_checklist` counts unchecked boxes, so a section that is not in the file
+at all counts zero and reads exactly like a section where everything got done:
+close passes, and nothing in the output says the check looked at nothing. That is
+what a ticket made before the template, written by hand, or carried over from
+another template looks like.
+
+`require_checklist_groups` names the headings that have to be there:
+
+```yaml
+require_checklist_groups:
+  - "Required Probes"
+```
+
+Close refuses when a declared name matches no group in either file - including a
+heading that is present with no checkboxes under it, which amounts to the same
+thing: there is nothing there to have been judged - and refuses while anything
+under it is unchecked. Matching is the same as `check --require`: heading text
+alone, either file, both together when it appears in both.
+
+Empty by default; with nothing declared, close behaves exactly as it did before.
+It is independent of `require_checklist` - the list is its own opt-in, so a
+project that has not turned the whole-file gate on still gets the groups it
+named. A missing group is reported before the unchecked items: "the section is
+not there" is the more basic of the two answers, and someone shown the unchecked
+list first would fill it in only to be told afterwards that the section they
+needed was never there.
+
+`check` shows where the declared groups stand but never fails on them; close is
+where they are refused.
 
 The key was called `require_note_checklist` while the check only looked at the
 note. That name is gone. It is not silently ignored: a config that still sets it

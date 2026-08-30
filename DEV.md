@@ -356,7 +356,7 @@ Documentation updates should be part of the same PR as code changes.
 - **Git history protection**: Prevents accidental commits of working files
 - **Work notes separation**: Optional separate note files for debugging and investigation logs
 - **Worktree support**: Optional git worktree mode for parallel ticket work without branch switching
-- **Checklist check**: `check` reports the checkboxes in both `ticket.md` and `note.md` by heading group, split per file; `check --require "<group>"` judges one group across both; and `require_checklist: true` makes `close` refuse while any are unchecked
+- **Checklist check**: `check` reports the checkboxes in both `ticket.md` and `note.md` by heading group, split per file; `check --require "<group>"` judges one group across both; `require_checklist: true` makes `close` refuse while any are unchecked; and `require_checklist_groups` (a list of heading names) makes `close` refuse when a named group is in neither file - counting unchecked boxes cannot catch that, since a section that is absent counts zero and reads as finished
 
 ## Troubleshooting
 

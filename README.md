@@ -308,6 +308,17 @@ delete_remote_on_close: true
 # boxes nobody ever filled in.
 require_checklist: false
 
+# Headings that have to be there. require_checklist counts unchecked boxes, so a
+# section that is not in the file at all counts zero and reads exactly like a
+# section where everything got done. Naming a heading here makes close refuse
+# when neither the ticket body nor the note has it (or has it with no checkboxes
+# under it), which is what catches a ticket made before the template, written by
+# hand, or carried over from another template. Also refuses while anything under
+# it is unchecked. Empty by default, and independent of require_checklist - the
+# list itself is the opt-in.
+# require_checklist_groups:
+#   - "Required Probes"
+
 # Worktree mode: create a separate git worktree for each ticket
 # When true, 'start' always creates a worktree (same as --worktree flag)
 # worktree_mode: false
